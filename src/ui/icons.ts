@@ -1,7 +1,7 @@
 // One consistent outline icon set (Lucide), inlined as SVG strings.
 
 import {
-  Armchair, Building2, Car, Construction, DoorOpen, Gauge, Grid3x3, Info, Landmark, Luggage, Map, Menu, MousePointer2,
+  Armchair, Building2, Car, Construction, DoorOpen, Fence, LogOut, Gauge, Grid3x3, Info, Landmark, Luggage, Map, Menu, MousePointer2,
   Pause, Plane, PlaneLanding, PlaneTakeoff, RotateCw, Route, ScanLine, ShoppingBag, Shovel, Square, Target, Ticket, Toilet,
   TowerControl, TreePine, TriangleAlert, Trophy, Users, Utensils, Wallet, X,
 } from 'lucide-static';
@@ -11,7 +11,7 @@ const ICONS = {
   board: Landmark, baggage: Luggage, map: Map, menu: Menu, select: MousePointer2, pause: Pause, plane: Plane, landing: PlaneLanding,
   takeoff: PlaneTakeoff, rotate: RotateCw, taxiway: Route, security: ScanLine, shop: ShoppingBag, bulldoze: Shovel, stand: Square,
   target: Target, checkin: Ticket, toilets: Toilet, tower: TowerControl, tree: TreePine, alert: TriangleAlert, trophy: Trophy,
-  gate: Users, food: Utensils, wallet: Wallet, close: X,
+  gate: Users, food: Utensils, wallet: Wallet, close: X, barrier: Fence, exit: LogOut,
 } as const;
 
 export type IconName = keyof typeof ICONS;

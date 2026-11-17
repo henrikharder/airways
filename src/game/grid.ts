@@ -103,8 +103,9 @@ export function checkPlace(s: GameState, kind: ModuleKind, x: number, y: number,
     for (let tx = x; tx < x + w; tx++) {
       if (!inside(s, tx, ty)) return { ok: false, reason: 'Outside the site', cost: spec.cost };
       const t = s.tiles[idx(s, tx, ty)];
-      if (L.occ[idx(s, tx, ty)]) return { ok: false, reason: 'Something is already here', cost: spec.cost };
-      if (spec.indoor && t !== T.Floor) return { ok: false, reason: 'Must be inside the terminal (paint terminal floor first)', cost: spec.cost };
+      const o = L.occ[idx(s, tx, ty)];
+      if (o && (kind === 'tree' || L.byId.get(o)?.kind !== 'tree')) return { ok: false, reason: 'Something is already here', cost: spec.cost };
+      if (spec.indoor && t !== T.Floor && !(kind === 'exit' && t === T.Barrier)) return { ok: false, reason: 'Must be inside the terminal (paint terminal floor first)', cost: spec.cost };
       if (!spec.indoor) {
         if (t === T.Floor || t === T.Road || t === T.Runway) return { ok: false, reason: 'Needs open ground', cost: spec.cost };
         if ((kind === 'tower' || kind === 'carpark' || kind === 'tree') && t !== T.Grass) return { ok: false, reason: 'Needs grass', cost: spec.cost };
@@ -114,13 +115,13 @@ export function checkPlace(s: GameState, kind: ModuleKind, x: number, y: number,
   if (spec.indoor) {
     // don't cover another module's service tile (its queue would be cut off)
     for (const o of s.buildings) {
-      if (!MODULES[o.kind].indoor || o.kind === 'entrance') continue;
+      if (!MODULES[o.kind].indoor || o.kind === 'entrance' || o.kind === 'exit') continue;
       const [ox, oy] = accessTile(o);
       if (ox >= x && ox < x + w && oy >= y && oy < y + h) return { ok: false, reason: `Blocks the front of the ${MODULES[o.kind].name.toLowerCase()}`, cost: spec.cost };
     }
     const b = { id: 0, kind, x, y, w, h, rot: rot as Building['rot'] };
     const [ax, ay] = accessTile(b);
-    if (kind !== 'entrance' && (tileAt(s, ax, ay) !== T.Floor || L.occ[idx(s, ax, ay)])) {
+    if (kind !== 'entrance' && kind !== 'exit' && (tileAt(s, ax, ay) !== T.Floor || L.occ[idx(s, ax, ay)])) {
       return { ok: false, reason: 'Keep the front side open (passengers queue there)', cost: spec.cost };
     }
   }
@@ -137,6 +138,8 @@ export function place(s: GameState, kind: ModuleKind, x: number, y: number, rot:
   const c = checkPlace(s, kind, x, y, rot);
   if (!c.ok) return c;
   const { w, h } = footprint(kind, rot);
+  // trees are cleared automatically
+  s.buildings = s.buildings.filter((o) => o.kind !== 'tree' || o.x < x || o.x >= x + w || o.y < y || o.y >= y + h);
   const b: Building = { id: ++s.nextId, kind, x, y, w, h, rot: rot as Building['rot'] };
   s.buildings.push(b);
   s.cash -= c.cost;
@@ -144,6 +147,7 @@ export function place(s: GameState, kind: ModuleKind, x: number, y: number, rot:
   if (kind === 'runway') for (let ty = y; ty < y + h; ty++) for (let tx = x; tx < x + w; tx++) s.tiles[idx(s, tx, ty)] = T.Runway;
   if (kind.startsWith('stand_')) for (let ty = y; ty < y + h; ty++) for (let tx = x; tx < x + w; tx++) s.tiles[idx(s, tx, ty)] = T.Apron;
   if (kind === 'carpark') for (let ty = y; ty < y + h; ty++) for (let tx = x; tx < x + w; tx++) s.tiles[idx(s, tx, ty)] = T.Parking;
+  if (kind === 'exit') for (let ty = y; ty < y + h; ty++) for (let tx = x; tx < x + w; tx++) s.tiles[idx(s, tx, ty)] = T.Floor;
   invalidate();
   linkGates(s);
   return c;
@@ -152,25 +156,31 @@ export function place(s: GameState, kind: ModuleKind, x: number, y: number, rot:
 export function paintCheck(s: GameState, paint: PaintKind, x: number, y: number): boolean {
   if (!inside(s, x, y)) return false;
   const t = s.tiles[idx(s, x, y)];
-  if (getLayout(s).occ[idx(s, x, y)]) return false;
+  const o = getLayout(s).occ[idx(s, x, y)];
+  if (o && getLayout(s).byId.get(o)?.kind !== 'tree') return false;
   if (paint === 'floor') return t === T.Grass;
+  if (paint === 'barrier') return t === T.Floor && !o;
   return t === T.Grass || t === T.Apron || t === T.Taxiway;
 }
 
 /** Paint a rectangle of tiles; returns tiles painted. */
 export function paintRect(s: GameState, paint: PaintKind, x0: number, y0: number, x1: number, y1: number): number {
-  const target = paint === 'floor' ? T.Floor : paint === 'taxiway' ? T.Taxiway : T.Apron;
+  const target = paint === 'floor' ? T.Floor : paint === 'taxiway' ? T.Taxiway : paint === 'barrier' ? T.Barrier : T.Apron;
   const cost = PAINTS[paint].costPerTile;
   let n = 0;
+  const cleared = new Set<number>();
   for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++) {
     for (let x = Math.min(x0, x1); x <= Math.max(x0, x1); x++) {
       if (!paintCheck(s, paint, x, y) || s.tiles[idx(s, x, y)] === target || s.cash < cost) continue;
+      const o = getLayout(s).occ[idx(s, x, y)];
+      if (o) cleared.add(o); // a tree
       s.tiles[idx(s, x, y)] = target;
       s.cash -= cost;
       s.today.construction += cost;
       n++;
     }
   }
+  if (cleared.size) s.buildings = s.buildings.filter((b) => !cleared.has(b.id));
   if (n) invalidate();
   return n;
 }
@@ -193,6 +203,11 @@ export function bulldozeAt(s: GameState, x: number, y: number): string | null {
     return `${MODULES[b.kind].name} removed`;
   }
   const t = s.tiles[idx(s, x, y)];
+  if (t === T.Barrier) {
+    s.tiles[idx(s, x, y)] = T.Floor;
+    invalidate();
+    return 'Barrier removed';
+  }
   if (t === T.Floor || t === T.Taxiway || t === T.Apron) {
     s.tiles[idx(s, x, y)] = T.Grass;
     invalidate();
@@ -223,9 +238,11 @@ export function linkGates(s: GameState): void {
   }
 }
 
-/** Walkable for passengers: terminal floor not covered by a module. */
-export function walkable(s: GameState, x: number, y: number): boolean {
-  return tileAt(s, x, y) === T.Floor && !getLayout(s).occ[idx(s, x, y)];
+/** Walkable for passengers: terminal floor not covered by a module. Arriving passengers may also pass through arrivals exits. */
+export function walkable(s: GameState, x: number, y: number, arriving = false): boolean {
+  if (tileAt(s, x, y) !== T.Floor) return false;
+  const o = getLayout(s).occ[idx(s, x, y)];
+  return !o || (arriving && getLayout(s).byId.get(o)?.kind === 'exit');
 }
 
 /** Drivable for aircraft. */

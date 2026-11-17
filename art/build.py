@@ -349,6 +349,17 @@ def m_entrance(b):
     b.box(1.05, 0.45, 0, 1.88, 0.55, 0.85, mat(C['glass'], 0.05))
 
 
+def m_exit(b):
+    # one-way arrivals door: frame, glass, green exit sign with arrow
+    b.box(0, 0.35, 0, 0.12, 0.65, 0.85, mat(C['dark']))
+    b.box(1.88, 0.35, 0, 2.0, 0.65, 0.85, mat(C['dark']))
+    b.box(0, 0.35, 0.85, 2.0, 0.65, 1.0, mat(C['green']))
+    b.box(0.6, 0.33, 0.87, 1.4, 0.34, 0.98, mat(C['white'], 0.4, 0.5))
+    b.box(0.12, 0.45, 0, 1.88, 0.55, 0.85, mat(C['glass'], 0.05))
+    b.box(0.85, 0.2, 0.01, 1.15, 0.8, 0.03, mat(C['green']))
+    b.cone(1.0, 0.95, 0.01, 0.03, 0.22, 0.0, mat(C['green']), 3)
+
+
 def m_tower(b):
     b.box(0.6, 0.6, 0, 2.4, 2.4, 0.5, mat(C['concrete']), 0.05)
     b.cyl(1.5, 1.5, 0.5, 6.4, 0.42, mat(C['white']), 12)
@@ -375,7 +386,7 @@ def m_jetbridge(b):
 MODULES = {
     'checkin': (4, 2, m_checkin), 'security': (2, 4, m_security), 'gate': (4, 4, m_gate), 'food': (4, 4, m_food),
     'shop': (3, 3, m_shop), 'toilets': (2, 2, m_toilets), 'seats': (2, 1, m_seats), 'baggage': (3, 4, m_baggage),
-    'entrance': (2, 1, m_entrance), 'tower': (3, 3, m_tower), 'tree': (1, 1, m_tree), 'jetbridge': (3, 1, m_jetbridge),
+    'entrance': (2, 1, m_entrance), 'exit': (2, 1, m_exit), 'tower': (3, 3, m_tower), 'tree': (1, 1, m_tree), 'jetbridge': (3, 1, m_jetbridge),
 }
 
 # ---------------------------------------------------------------- aircraft (real dimensions, metres)

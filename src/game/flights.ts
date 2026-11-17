@@ -34,10 +34,11 @@ function haversine(a: string, b: string): number {
 
 // ---------- contracts ----------
 
+/** Network airlines link you to their hubs; low-cost carriers also fly point to point. */
 function destinationsOf(code: string): string[] {
   const seed = AIRLINES.find((a) => a.code === code)!;
   const set = new Set<string>(seed.hubs);
-  for (const r of seed.routes) set.add(r.split('-')[1]);
+  if (seed.style === 'lowcost') for (const r of seed.routes) set.add(r.split('-')[1]);
   return [...set].filter((d) => AIRPORT_BY_CODE[d]);
 }
 
@@ -49,7 +50,8 @@ export function generateOffers(s: GameState): void {
   // most offers fit the stands you already have (or regional/narrowbody ones before you have any)
   const order = ['s', 'm', 'l', 'xl'];
   const biggest = Math.max(1, ...s.buildings.filter((b) => b.kind.startsWith('stand_')).map((b) => order.indexOf(b.kind.slice(6))));
-  for (let i = 0; i < want; i++) {
+  let made = 0;
+  for (let attempt = 0; attempt < want * 15 && made < want; attempt++) {
     const seed = pick(AIRLINES);
     const dests = destinationsOf(seed.code).filter((d) => d !== s.city && haversine(s.city, d) > 250
       && !s.contracts.some((c) => c.airline === seed.code && c.dest === d) && !s.offers.some((o) => o.airline === seed.code && o.dest === d));
@@ -58,9 +60,10 @@ export function generateOffers(s: GameState): void {
     const km = haversine(s.city, dest);
     const fleet = seed.fleet.filter((t) => acType(t).rangeKm >= km * 1.05);
     if (!fleet.length) continue;
-    const stretch = Math.random() < 0.25 ? 1 : 0; // now and then, a reason to build bigger
+    const stretch = Math.random() < 0.2 ? 1 : 0; // now and then, a reason to build bigger
     const sized = fleet.filter((t) => order.indexOf(standClassFor(t)) <= biggest + stretch && (s.rating >= 55 || standClassFor(t) !== 'xl'));
     if (!sized.length) continue;
+    made++;
     const typeId = pick(sized).toString();
     const A = airport(s.city), B = airport(dest);
     const demand = Math.sqrt(A.pop * B.pop) * (A.wealth + B.wealth) * (0.6 + B.tourism * 0.4) / Math.sqrt(Math.max(1, km / 800));
@@ -175,6 +178,37 @@ export function gateOf(s: GameState, f: Flight): Building | undefined {
 
 let runwayFreeAt = 0;
 
+const GROUND: Flight['phase'][] = ['taxi_in', 'taxi_out', 'pushback', 'lineup', 'parking', 'landing'];
+const HALF_LEN: Record<string, number> = { s: 2.6, m: 3.8, l: 6.2, xl: 7.4 };
+const holdingSince = new Map<number, number>();
+
+/**
+ * Hold short if another aircraft on the ground sits ahead on our path. After a
+ * few minutes of waiting we go anyway, so a head-on standoff can't jam the airport.
+ */
+export function held(s: GameState, f: Flight, now: number): boolean {
+  const next = f.path[f.pathI];
+  if (!next) return false;
+  const dx = next[0] - f.x, dy = next[1] - f.y;
+  const d = Math.hypot(dx, dy);
+  if (d < 1e-6) return false;
+  const ux = dx / d, uy = dy / d;
+  const mine = HALF_LEN[standClassFor(f.typeId)];
+  for (const o of s.flights) {
+    if (o === f || !GROUND.includes(o.phase) || o.alt > 0.2) continue;
+    const ox = o.x - f.x, oy = o.y - f.y;
+    const ahead = ox * ux + oy * uy;
+    const side = Math.abs(ox * uy - oy * ux);
+    if (ahead > 0 && ahead < mine + HALF_LEN[standClassFor(o.typeId)] + 1.5 && side < 2.2) {
+      const since = holdingSince.get(f.id) ?? now;
+      holdingSince.set(f.id, since);
+      if (now - since < 4) return true;
+    }
+  }
+  holdingSince.delete(f.id);
+  return false;
+}
+
 /** Roll out to the first taxiway leaving the runway after 35% of its length (else 62%). */
 function exitFraction(s: GameState, rw: Building): number {
   const along = rw.rot % 2 === 0;
@@ -271,6 +305,7 @@ export function updateFlight(s: GameState, f: Flight, dt: number, onDepart: (f: 
       return;
     }
     case 'taxi_in': {
+      if (held(s, f, now)) return;
       if (moveAlong(f, TAXI, dt)) {
         const st = L.byId.get(f.stand!)!;
         f.path = [standPoints(st).park];
@@ -315,6 +350,7 @@ export function updateFlight(s: GameState, f: Flight, dt: number, onDepart: (f: 
       return;
     }
     case 'taxi_out': {
+      if (held(s, f, now)) return;
       if (moveAlong(f, TAXI, dt)) f.phase = 'lineup';
       return;
     }

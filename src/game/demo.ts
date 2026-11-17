@@ -20,6 +20,9 @@ export function buildDemo(s: GameState): string[] {
   for (const x of [33, 44, 55, 66]) ok(place(s, 'gate', x, 52, 0), `gate ${x}`);
   ok(place(s, 'security', 48, 62, 0), 'security');
   ok(place(s, 'security', 52, 62, 0), 'security 2');
+  // glass barrier between landside and airside; the lanes and one exit are the only ways through
+  paintRect(s, 'barrier', 28, 63, 74, 63);
+  ok(place(s, 'exit', 70, 63, 0), 'exit');
   ok(place(s, 'checkin', 40, 72, 0), 'checkin');
   ok(place(s, 'checkin', 56, 72, 0), 'checkin 2');
   ok(place(s, 'entrance', 50, 79, 2), 'entrance');

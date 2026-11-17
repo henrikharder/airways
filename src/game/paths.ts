@@ -8,12 +8,16 @@ import type { Building, GameState } from './types';
 export const UNREACHABLE = 0x7fff;
 
 interface Field { stamp: number; dist: Int16Array }
-const fields = new Map<number, Field>();
+const fields = new Map<string, Field>();
 
-/** Distance (in tiles) from every walkable tile to a building's access tile. */
-export function fieldFor(s: GameState, b: Building): Int16Array {
+/**
+ * Distance (in tiles) from every walkable tile to a building's access tile.
+ * `arriving` fields may pass through arrivals exits; departing ones may not.
+ */
+export function fieldFor(s: GameState, b: Building, arriving = false): Int16Array {
   const stamp = layoutStamp();
-  const hit = fields.get(b.id);
+  const key = `${b.id}:${arriving ? 'a' : 'd'}`;
+  const hit = fields.get(key);
   if (hit && hit.stamp === stamp) return hit.dist;
   const dist = new Int16Array(s.W * s.H).fill(UNREACHABLE);
   const [ax, ay] = accessTile(b);
@@ -28,7 +32,7 @@ export function fieldFor(s: GameState, b: Building): Int16Array {
       const y = (i - x) / s.W;
       const d = dist[i] + 1;
       for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
-        if (!walkable(s, nx, ny)) continue;
+        if (!walkable(s, nx, ny, arriving)) continue;
         const j = idx(s, nx, ny);
         if (dist[j] <= d) continue;
         dist[j] = d;
@@ -36,18 +40,18 @@ export function fieldFor(s: GameState, b: Building): Int16Array {
       }
     }
   }
-  fields.set(b.id, { stamp, dist });
+  fields.set(key, { stamp, dist });
   return dist;
 }
 
-export function distanceTo(s: GameState, b: Building, x: number, y: number): number {
+export function distanceTo(s: GameState, b: Building, x: number, y: number, arriving = false): number {
   if (!inside(s, x, y)) return UNREACHABLE;
-  return fieldFor(s, b)[idx(s, Math.floor(x), Math.floor(y))];
+  return fieldFor(s, b, arriving)[idx(s, Math.floor(x), Math.floor(y))];
 }
 
 /** Next tile centre to walk to, descending the field. Null at the goal or if unreachable. */
-export function nextStep(s: GameState, b: Building, x: number, y: number): [number, number] | null {
-  const f = fieldFor(s, b);
+export function nextStep(s: GameState, b: Building, x: number, y: number, arriving = false): [number, number] | null {
+  const f = fieldFor(s, b, arriving);
   const tx = Math.floor(x);
   const ty = Math.floor(y);
   const here = inside(s, tx, ty) ? f[idx(s, tx, ty)] : UNREACHABLE;

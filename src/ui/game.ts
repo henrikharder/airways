@@ -7,12 +7,13 @@ import { accessTile, bulldozeAt, checkPlace, footprint, getLayout, idx, layoutSt
 import { buildDemo } from '../game/demo';
 import { createGame } from '../game/newgame';
 import { distanceTo, UNREACHABLE } from '../game/paths';
-import { queueLength, usersOf } from '../game/passengers';
+import { serviceStats, usersOf } from '../game/passengers';
 import { hasSave, loadGame, saveGame } from '../game/save';
 import { advance, upkeepPerDay } from '../game/sim';
 import type { Building, GameState, ModuleKind, PaintKind } from '../game/types';
 import { income, profit } from '../game/types';
-import { Scene, type Ghost } from '../render/scene';
+import { laneExit, securityReport } from '../game/security';
+import { Scene, type Badge, type Ghost } from '../render/scene';
 import { boardShell, gateLabel, statusOf, updateBoards } from './departures';
 import { clock, esc, money, num } from './format';
 import { icon, logoMark, type IconName } from './icons';
@@ -25,7 +26,7 @@ const SPEED_LABEL = ['', '1×', '2×', '3×', '4×'];
 
 const PALETTE: { cat: Category | 'tools'; label: string; items: ({ build: ModuleKind } | { paint: PaintKind })[] }[] = [
   { cat: 'airside', label: 'Airside', items: [{ build: 'runway' }, { build: 'tower' }, { paint: 'taxiway' }, { paint: 'apron' }, { build: 'stand_s' }, { build: 'stand_m' }, { build: 'stand_l' }, { build: 'stand_xl' }] },
-  { cat: 'terminal', label: 'Terminal', items: [{ paint: 'floor' }, { build: 'entrance' }, { build: 'checkin' }, { build: 'security' }, { build: 'gate' }, { build: 'baggage' }] },
+  { cat: 'terminal', label: 'Terminal', items: [{ paint: 'floor' }, { build: 'entrance' }, { build: 'checkin' }, { build: 'security' }, { paint: 'barrier' }, { build: 'exit' }, { build: 'gate' }, { build: 'baggage' }] },
   { cat: 'comfort', label: 'Comforts', items: [{ build: 'food' }, { build: 'shop' }, { build: 'toilets' }, { build: 'seats' }] },
   { cat: 'landside', label: 'Landside', items: [{ build: 'carpark' }, { build: 'tree' }] },
 ];
@@ -33,7 +34,7 @@ const PALETTE: { cat: Category | 'tools'; label: string; items: ({ build: Module
 const ITEM_ICON: Partial<Record<ModuleKind | PaintKind, IconName>> = {
   runway: 'runway', tower: 'tower', taxiway: 'taxiway', apron: 'floor', stand_s: 'stand', stand_m: 'stand', stand_l: 'stand', stand_xl: 'stand',
   floor: 'terminal', entrance: 'entrance', checkin: 'checkin', security: 'security', gate: 'gate', baggage: 'baggage', food: 'food', shop: 'shop',
-  toilets: 'toilets', seats: 'seats', carpark: 'car', tree: 'tree',
+  toilets: 'toilets', seats: 'seats', carpark: 'car', tree: 'tree', barrier: 'barrier', exit: 'exit',
 };
 
 export class Game {
@@ -49,6 +50,8 @@ export class Game {
   private tab: Tab = 'airport';
   private lastPanel = 0;
   private lastSavedDay = -1;
+  private lastSaveAt = 0;
+  private savedSig = '';
   private warnings: string[] = [];
   private warnStamp = -1;
   private keys = new Set<string>();
@@ -60,6 +63,7 @@ export class Game {
         <div id="stage"></div>
         <nav id="palette"></nav>
         <div id="warnings"></div>
+        <div id="viewbar"><button data-act="heat" title="Crowding heatmap (H)">${icon('gauge')} Crowding</button></div>
         <aside id="panel"><nav id="tabs"></nav><div id="view"></div></aside>
         <div id="tip" hidden></div>
       </main>
@@ -95,8 +99,12 @@ export class Game {
     this.tool = { t: 'select' };
     this.overlay(null);
     const rw = runway(s);
-    this.scene.zoom = 1.6;
-    this.scene.centerOn(rw ? rw.x + rw.w / 2 : s.W / 2, rw ? rw.y + 30 : s.H / 2);
+    if (rw) {
+      this.scene.zoom = 1.4;
+      this.scene.centerOn(rw.x + rw.w / 2, rw.y + 30);
+    } else {
+      this.scene.fitSite(s.W, s.H);
+    }
     this.lastSavedDay = Math.floor(s.minute / 1440);
     this.renderChrome();
     this.renderPanel();
@@ -117,9 +125,17 @@ export class Game {
         const typing = document.activeElement instanceof HTMLInputElement && this.$('#view').contains(document.activeElement);
         if (!typing) this.renderPanel();
         updateBoards(this.$('#view'), this.s);
+        this.scene.setBadges(this.badges());
       }
       const day = Math.floor(this.s.minute / 1440);
-      if (day !== this.lastSavedDay) { this.lastSavedDay = day; saveGame(this.s); }
+      // save on a new day, soon after building or signing, and every 30 s
+      const sig = `${layoutStamp()}:${this.s.contracts.length}`;
+      if (day !== this.lastSavedDay || (sig !== this.savedSig && t - this.lastSaveAt > 1500) || t - this.lastSaveAt > 30_000) {
+        this.lastSavedDay = day;
+        this.savedSig = sig;
+        this.lastSaveAt = t;
+        saveGame(this.s);
+      }
       if (this.s.board.meeting && this.$('#overlay').hidden) this.showMeeting();
       if (this.s.gameOver && this.$('#overlay').hidden) this.showGameOver();
     }
@@ -175,6 +191,7 @@ export class Game {
       else if (e.code === 'Space') { e.preventDefault(); this.setSpeed(this.speed ? 0 : 1); }
       else if (/^Digit[0-4]$/.test(e.code)) this.setSpeed(Number(e.code.slice(5)));
       else if (e.key === 'b') this.setTool({ t: 'bulldoze' });
+      else if (e.key === 'h') this.toggleHeat();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
     document.addEventListener('visibilitychange', () => { if (document.hidden && this.s) saveGame(this.s); });
@@ -251,6 +268,11 @@ export class Game {
     this.renderPalette();
   }
 
+  private toggleHeat(): void {
+    this.scene.heatmap = !this.scene.heatmap;
+    this.$('#viewbar [data-act="heat"]').classList.toggle('on', this.scene.heatmap);
+  }
+
   private setSpeed(n: number): void {
     this.speed = n;
     this.renderTopbar();
@@ -289,6 +311,7 @@ export class Game {
         return;
       }
       case 'rotate': this.rot = (this.rot + 1) % 4; return;
+      case 'heat': return this.toggleHeat();
       case 'speed': return this.setSpeed(Number(d.speed));
       case 'tab': this.tab = d.tab as Tab; this.selected = null; return this.renderPanel();
       case 'accept': { const err = acceptOffer(this.s, Number(d.id)); if (err) this.toast(err, 'err'); else this.toast('Contract signed'); return this.renderPanel(); }
@@ -356,6 +379,19 @@ export class Game {
       ${PALETTE.map((g) => `<div class="pal-group"><div class="pal-h">${g.label}</div>${g.items.map(btn).join('')}</div>`).join('')}`;
   }
 
+  /** Queue badges over modules where passengers are piling up. */
+  private badges(): Badge[] {
+    const out: Badge[] = [];
+    for (const b of this.s.buildings) {
+      if (!MODULES[b.kind].servers) continue;
+      const st = serviceStats(b.id, this.s.minute);
+      if (st.queue < 6) continue;
+      const color = st.wait > 20 || st.queue > 40 ? 0xd9445c : st.wait > 10 || st.queue > 20 ? 0xe07b1f : 0x3a8f63;
+      out.push({ key: `q${b.id}`, x: b.x + b.w / 2, y: b.y + b.h / 2, text: `${st.queue} waiting · ${Math.round(st.wait)} min`, color });
+    }
+    return out;
+  }
+
   private renderTicker(): void {
     const n = this.s.news[0];
     this.$('#ticker').innerHTML = n ? `<span class="tone ${n.tone}"></span><span class="muted mono">Day ${Math.floor(n.min / 1440) + 1} ${clock(n.min)}</span> ${esc(n.text)}` : '';
@@ -381,10 +417,16 @@ export class Game {
     if (entrance) {
       const [ex, ey] = accessTile(entrance);
       if (!walkable(s, ex, ey)) w.push('The entrance must open onto free terminal floor.');
+      // passengers come out behind a security lane, so gates only need to be reachable from there
+      const starts = [[ex, ey], ...s.buildings.filter((b) => b.kind === 'security').map(laneExit)];
       for (const g of s.buildings.filter((b) => b.kind === 'gate')) {
-        if (distanceTo(s, g, ex + 0.5, ey + 0.5) >= UNREACHABLE) w.push(`${gateLabel(s, g.id)} cannot be reached from the entrance.`);
+        if (starts.every(([x, y]) => distanceTo(s, g, x + 0.5, y + 0.5) >= UNREACHABLE)) w.push(`${gateLabel(s, g.id)} cannot be reached from the entrance or security.`);
       }
     }
+    const sec = securityReport(s);
+    if (sec.breach) w.push('Security breach: gates can be reached without screening. Wall off the airside with barriers (fined daily).');
+    if (sec.badLanes) w.push(`${sec.badLanes} security lane${sec.badLanes > 1 ? 's open' : ' opens'} back into the landside or onto a blocked tile.`);
+    if (sec.trapped) w.push('Arriving passengers cannot get out: add an arrivals exit in the barrier (fined daily).');
     const types = new Set(s.contracts.map((c) => c.typeId));
     for (const tId of types) if (!stands.some((b) => standFits(b.kind, tId))) w.push(`No stand big enough for the ${acType(tId).name} (needs ${standClassFor(tId).toUpperCase()}).`);
     return w;
@@ -507,7 +549,14 @@ export class Game {
     const s = this.s;
     const m = MODULES[b.kind];
     const stats: string[] = [];
-    if (m.servers) stats.push(this.kpi('Queue', num(queueLength(b.id))), this.kpi('Being served', `${Math.min(m.servers, usersOf(b.id))}/${m.servers}`), this.kpi('Service time', `${m.serviceMin} min`));
+    if (m.servers) {
+      const st = serviceStats(b.id, s.minute);
+      stats.push(
+        this.kpi('Queue', num(st.queue), st.queue > 20 ? 'neg' : ''), this.kpi('Avg wait', `${Math.round(st.wait)} min`, st.wait > 15 ? 'neg' : st.wait > 8 ? 'warn' : 'pos'),
+        this.kpi('Served / hour', num(st.perHour)), this.kpi('Being served', `${Math.min(m.servers, usersOf(b.id))}/${m.servers}`),
+        this.kpi('Capacity / hour', num((m.servers! * 60) / m.serviceMin!)),
+      );
+    }
     if (m.capacity && !m.servers) stats.push(this.kpi('In use', `${usersOf(b.id)}/${m.capacity}`));
     if (m.spend) stats.push(this.kpi('Avg spend', money(m.spend)));
     let extra = '';

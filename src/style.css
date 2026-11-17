@@ -81,6 +81,9 @@ main { position: relative; min-height: 0; overflow: hidden; }
 .warn-item { display: flex; gap: 8px; align-items: center; background: #2a1a10ee; border: 1px solid #ff9f4366; color: #ffd8b3; border-radius: var(--radius); padding: 6px 10px; font-size: 12.5px; }
 .warn-item .ico { color: var(--warn); }
 
+#viewbar { position: absolute; left: 198px; bottom: 10px; z-index: 2; display: flex; gap: 6px; }
+#viewbar button { display: inline-flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--radius); padding: 6px 10px; color: var(--muted); cursor: pointer; font-size: 12.5px; backdrop-filter: blur(8px); }
+#viewbar button.on { color: var(--text); border-color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
 #panel { position: absolute; right: 10px; top: 10px; bottom: 10px; width: 380px; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; backdrop-filter: blur(8px); z-index: 2; overflow: hidden; }
 #tabs { display: flex; border-bottom: 1px solid var(--line); }
 #tabs button { flex: 1; background: none; border: 0; padding: 11px 4px 9px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; font: 600 13px var(--display); text-transform: uppercase; letter-spacing: 0.1em; position: relative; }
@@ -198,5 +201,6 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1
   .tools-top { flex-direction: column; }
   #warnings { left: 82px; right: 10px; }
   #panel { top: auto; height: 45%; left: 82px; width: auto; }
+  #viewbar { left: 82px; bottom: calc(45% + 10px); }
   .hide-sm { display: none; }
 }

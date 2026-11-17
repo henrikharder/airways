@@ -1,7 +1,7 @@
 // Isometric renderer (PixiJS). Ground is painted with vector graphics; every
 // building, aircraft and passenger is a Blender-rendered sprite, depth sorted.
 
-import { Application, Assets, Container, Graphics, Sprite, Texture } from 'pixi.js';
+import { Application, Assets, Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
 import manifest from '../generated/sprites.json';
 import { MODULES, spriteType } from '../game/catalog';
 import { airlineColor, runway } from '../game/flights';
@@ -37,6 +37,8 @@ const COLORS = {
   parking: 0x6a707a,
 };
 
+export interface Badge { key: string; x: number; y: number; text: string; color: number }
+
 export interface Ghost {
   kind?: ModuleKind;
   x: number;
@@ -50,7 +52,14 @@ export class Scene {
   app = new Application();
   world = new Container();
   private ground = new Graphics();
+  private heat = new Graphics();
+  private density: Float32Array | null = null;
+  private heatAt = 0;
+  heatmap = false;
   private overlay = new Graphics();
+  private labels = new Container();
+  private labelPool = new Map<string, Container>();
+  private labelAt = new Map<string, [number, number]>();
   private objects = new Container();
   private textures = new Map<string, Texture>();
   private buildingSprites = new Map<number, Container>();
@@ -62,10 +71,10 @@ export class Scene {
   private walkClock = 0;
 
   async init(host: HTMLElement): Promise<void> {
-    await this.app.init({ resizeTo: host, background: 0x6fbd60, antialias: true, autoDensity: true, resolution: window.devicePixelRatio || 1 });
+    await this.app.init({ resizeTo: host, background: 0x2e5a34, antialias: true, autoDensity: true, resolution: window.devicePixelRatio || 1 });
     host.appendChild(this.app.canvas);
     this.objects.sortableChildren = true;
-    this.world.addChild(this.ground, this.objects, this.overlay);
+    this.world.addChild(this.ground, this.heat, this.objects, this.overlay, this.labels);
     this.app.stage.addChild(this.world);
     const base = import.meta.env.BASE_URL;
     const names = Object.keys(FRAMES);
@@ -92,8 +101,20 @@ export class Scene {
     this.world.position.set(w / 2 - isoX(gx, gy) * this.zoom, h / 2 - isoY(gx, gy) * this.zoom);
   }
 
+  /** Zoom so the whole site fits between the side panels. */
+  fitSite(W: number, H: number, padLeft = 200, padRight = 400): void {
+    const w = this.app.screen.width - padLeft - padRight;
+    const h = this.app.screen.height - 40;
+    const siteW = ((W + H) * TW) / 2;
+    const siteH = ((W + H) * TH) / 2;
+    this.zoom = Math.max(0.3, Math.min(2, Math.min(w / siteW, h / siteH)));
+    this.world.scale.set(this.zoom);
+    const cx = isoX(W / 2, H / 2), cy = isoY(W / 2, H / 2);
+    this.world.position.set(padLeft + w / 2 - cx * this.zoom, 20 + h / 2 - cy * this.zoom);
+  }
+
   zoomAt(sx: number, sy: number, factor: number): void {
-    const z = Math.max(0.5, Math.min(5, this.zoom * factor));
+    const z = Math.max(0.3, Math.min(5, this.zoom * factor));
     const wx = (sx - this.world.x) / this.zoom;
     const wy = (sy - this.world.y) / this.zoom;
     this.zoom = z;
@@ -124,6 +145,7 @@ export class Scene {
     const g = this.ground;
     g.clear();
     const t = (x: number, y: number) => (x < 0 || y < 0 || x >= s.W || y >= s.H ? -1 : s.tiles[idx(s, x, y)]);
+    const indoor = (v: number) => v === T.Floor || v === T.Barrier;
     for (let y = 0; y < s.H; y++) {
       for (let x = 0; x < s.W; x++) {
         const v = s.tiles[idx(s, x, y)];
@@ -132,12 +154,19 @@ export class Scene {
           case T.Apron: c = COLORS.apron; break;
           case T.Taxiway: c = COLORS.taxiway; break;
           case T.Runway: c = COLORS.runway; break;
-          case T.Floor: c = (x + y) % 2 ? COLORS.floor : COLORS.floorAlt; break;
+          case T.Floor:
+          case T.Barrier: c = (x + y) % 2 ? COLORS.floor : COLORS.floorAlt; break;
           case T.Road: c = COLORS.road; break;
           case T.Parking: c = COLORS.parking; break;
           default: c = COLORS.grass[(x * 7 + y * 13) % 3];
         }
         this.diamond(g, x, y, c);
+      }
+    }
+    // forest beyond the site boundary
+    for (let k = -6; k < Math.max(s.W, s.H) + 6; k++) {
+      for (let d = 1; d <= 6; d++) {
+        for (const [x, y] of [[k, -d], [k, s.H - 1 + d], [-d, k], [s.W - 1 + d, k]]) this.diamond(g, x, y, d % 2 ? 0x3c7a3f : 0x377238);
       }
     }
     // taxiway centre lines
@@ -179,15 +208,36 @@ export class Scene {
     }
     // terminal walls: low glass edges where floor meets the outside
     for (let y = 0; y < s.H; y++) for (let x = 0; x < s.W; x++) {
-      if (t(x, y) !== T.Floor) continue;
+      if (!indoor(t(x, y))) continue;
       const h = ZPX * 0.32;
       const wall = (x0: number, y0: number, x1: number, y1: number, shade: number) => {
         const ax = isoX(x0, y0), ay = isoY(x0, y0), bx = isoX(x1, y1), by = isoY(x1, y1);
         g.poly([ax, ay, bx, by, bx, by - h, ax, ay - h]).fill({ color: shade, alpha: 0.55 });
         g.moveTo(ax, ay - h).lineTo(bx, by - h).stroke({ color: 0xffffff, width: 0.8, alpha: 0.9 });
       };
-      if (t(x, y - 1) !== T.Floor) wall(x, y, x + 1, y, 0x9fd3f5);
-      if (t(x - 1, y) !== T.Floor) wall(x, y, x, y + 1, 0x86c3ec);
+      if (!indoor(t(x, y - 1))) wall(x, y, x + 1, y, 0x9fd3f5);
+      if (!indoor(t(x - 1, y))) wall(x, y, x, y + 1, 0x86c3ec);
+    }
+    // security barriers: taller frosted glass through the tile centres
+    const exitAt = (x: number, y: number) => {
+      const o = getLayout(s).occ[idx(s, x, y)];
+      return !!o && getLayout(s).byId.get(o)?.kind === 'exit';
+    };
+    const joins = (x: number, y: number) => t(x, y) === T.Barrier || (x >= 0 && y >= 0 && x < s.W && y < s.H && exitAt(x, y));
+    const panel = (x0: number, y0: number, x1: number, y1: number) => {
+      const h = ZPX * 0.55;
+      const ax = isoX(x0, y0), ay = isoY(x0, y0), bx = isoX(x1, y1), by = isoY(x1, y1);
+      g.moveTo(ax, ay).lineTo(bx, by).stroke({ color: 0x475569, width: 1.6 });
+      g.poly([ax, ay, bx, by, bx, by - h, ax, ay - h]).fill({ color: 0x7fb2d6, alpha: 0.55 });
+      g.moveTo(ax, ay - h).lineTo(bx, by - h).stroke({ color: 0xe11d48, width: 1.2 });
+    };
+    for (let y = 0; y < s.H; y++) for (let x = 0; x < s.W; x++) {
+      if (t(x, y) !== T.Barrier) continue;
+      const cx = x + 0.5, cy = y + 0.5;
+      const n = [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dy]) => joins(x + dx, y + dy));
+      // draw back-to-front so the near panel overlaps the far one
+      for (const [dx, dy] of n.sort((a, b) => a[0] + a[1] - (b[0] + b[1]))) panel(cx, cy, cx + dx * 0.5, cy + dy * 0.5);
+      if (!n.length) panel(cx - 0.3, cy, cx + 0.3, cy);
     }
   }
 
@@ -342,7 +392,70 @@ export class Scene {
 
   // ---------------------------------------------------------------- frame
 
+  /** Floating badges (e.g. queue length and wait) that stay the same size on screen. */
+  setBadges(badges: Badge[]): void {
+    const live = new Set<string>();
+    for (const b of badges) {
+      live.add(b.key);
+      let c = this.labelPool.get(b.key);
+      if (!c) {
+        c = new Container();
+        const bg = new Graphics();
+        const t = new Text({ text: '', style: { fontFamily: 'JetBrains Mono, monospace', fontSize: 11, fontWeight: '600', fill: 0xffffff } });
+        t.anchor.set(0.5, 0.5);
+        c.addChild(bg, t);
+        this.labels.addChild(c);
+        this.labelPool.set(b.key, c);
+      }
+      const bg = c.children[0] as Graphics;
+      const t = c.children[1] as Text;
+      if (t.text !== b.text || c.label !== String(b.color)) {
+        t.text = b.text;
+        c.label = String(b.color);
+        const w = t.width + 14, h = 20;
+        bg.clear().roundRect(-w / 2, -h / 2, w, h, 10).fill({ color: b.color, alpha: 0.92 }).stroke({ color: 0x000000, width: 1, alpha: 0.35 });
+        bg.moveTo(-5, h / 2).lineTo(0, h / 2 + 6).lineTo(5, h / 2).fill({ color: b.color, alpha: 0.92 });
+      }
+      this.labelAt.set(b.key, [b.x, b.y]);
+    }
+    for (const [k, c] of this.labelPool) if (!live.has(k)) { c.destroy({ children: true }); this.labelPool.delete(k); this.labelAt.delete(k); }
+    this.placeLabels();
+  }
+
+  private placeLabels(): void {
+    for (const [k, c] of this.labelPool) {
+      const [x, y] = this.labelAt.get(k)!;
+      c.position.set(isoX(x, y), isoY(x, y) - 34 / this.zoom);
+      c.scale.set(1 / this.zoom);
+    }
+  }
+
+  /** Crowding heatmap: a moving average of passengers per tile, drawn green → amber → red. */
+  private drawHeat(s: GameState, dtReal: number): void {
+    if (!this.density || this.density.length !== s.W * s.H) this.density = new Float32Array(s.W * s.H);
+    const d = this.density;
+    const k = Math.min(1, dtReal * 0.8);
+    for (let i = 0; i < d.length; i++) d[i] *= 1 - k;
+    for (const p of s.pax) {
+      const x = Math.floor(p.x), y = Math.floor(p.y);
+      if (x >= 0 && y >= 0 && x < s.W && y < s.H) d[y * s.W + x] += k;
+    }
+    const now = performance.now();
+    if (now - this.heatAt < 200) return;
+    this.heatAt = now;
+    const g = this.heat;
+    g.clear();
+    if (!this.heatmap) return;
+    for (let y = 0; y < s.H; y++) for (let x = 0; x < s.W; x++) {
+      const v = d[y * s.W + x];
+      if (s.tiles[y * s.W + x] !== T.Floor) continue;
+      const color = v < 1.5 ? 0x4ade9b : v < 4 ? 0xf2b544 : 0xf2637a;
+      this.diamond(g, x, y, color, v < 0.2 ? 0.12 : Math.min(0.75, 0.25 + v * 0.08));
+    }
+  }
+
   render(s: GameState, groundStamp: number, dtReal: number, ghost: Ghost | null, hover: [number, number] | null, selected: Building | null): void {
+    this.drawHeat(s, dtReal);
     if (groundStamp !== this.groundStamp) {
       this.groundStamp = groundStamp;
       this.drawGround(s);
@@ -351,6 +464,7 @@ export class Scene {
     this.syncAircraft(s);
     this.syncPax(s, dtReal);
     this.drawOverlay(s, ghost, hover, selected);
+    this.placeLabels();
   }
 
   /** Thumbnail URL of a module's sprite for the build menu. */

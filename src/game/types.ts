@@ -1,14 +1,14 @@
 // Airport tycoon game state. Grid units: 1 tile = 5 m. Time: game minutes.
 
-export const T = { Grass: 0, Apron: 1, Taxiway: 2, Runway: 3, Floor: 4, Road: 5, Parking: 6 } as const;
+export const T = { Grass: 0, Apron: 1, Taxiway: 2, Runway: 3, Floor: 4, Road: 5, Parking: 6, Barrier: 7 } as const;
 export type TileType = (typeof T)[keyof typeof T];
 
 export type ModuleKind =
   | 'runway' | 'tower' | 'stand_s' | 'stand_m' | 'stand_l' | 'stand_xl'
-  | 'entrance' | 'checkin' | 'security' | 'gate' | 'food' | 'shop' | 'toilets' | 'seats' | 'baggage'
+  | 'entrance' | 'exit' | 'checkin' | 'security' | 'gate' | 'food' | 'shop' | 'toilets' | 'seats' | 'baggage'
   | 'carpark' | 'tree';
 
-export type PaintKind = 'taxiway' | 'floor' | 'apron';
+export type PaintKind = 'taxiway' | 'floor' | 'apron' | 'barrier';
 
 export interface Building {
   id: number;

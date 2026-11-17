@@ -4,6 +4,7 @@ import { FEES, MODULES } from './catalog';
 import { weeklyMeeting } from './board';
 import { airlineName, allocateStands, generateOffers, landingFee, scheduleContract, updateFlight } from './flights';
 import { addNews } from './news';
+import { SECURITY_FINE, securityReport } from './security';
 import { spawnPax, updatePax } from './passengers';
 import type { Flight, GameState, Ledger, Pax } from './types';
 import { emptyLedger, T } from './types';
@@ -88,6 +89,16 @@ function newDay(s: GameState, day: number): void {
       s.flights = s.flights.filter((f) => !(f.contract === c.id && f.phase === 'scheduled'));
       addNews(s, `${airlineName(c.airline)} pulls out after too many delays and unhappy passengers.`, 'bad');
     }
+  }
+  // the aviation authority inspects the terminal every day
+  const sec = securityReport(s);
+  if (sec.applies && s.contracts.length && (sec.breach || sec.trapped)) {
+    s.cash -= SECURITY_FINE;
+    book(s, 'upkeep', SECURITY_FINE);
+    s.rating = Math.max(0, s.rating - 4);
+    addNews(s, sec.breach
+      ? 'Aviation authority fine: passengers can reach the gates without going through security. Wall off the airside with barriers.'
+      : 'Aviation authority fine: arriving passengers have no way out. Add an arrivals exit in the security barrier.', 'bad');
   }
   for (const c of s.contracts) scheduleContract(s, c, day);
   s.scheduledDay = day;
