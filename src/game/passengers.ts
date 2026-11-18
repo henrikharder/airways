@@ -6,6 +6,7 @@ import { acType } from '../data/aircraft';
 import { drawBags } from './baggage';
 import { busRate, isRemote, runBuses, takeSeat } from './buses';
 import { isBorder } from './border';
+import { pickConnection, premiumShare, transferShare } from './hub';
 import { openServers } from './staff';
 import { gateOf } from './flights';
 import { accessTile, frontDir, getLayout, layoutStamp, localPoint, walkable } from './grid';
@@ -85,7 +86,7 @@ export function queueSlots(s: GameState, b: Building): [number, number][] {
 export function resetServices(s: GameState): void {
   services.clear();
   for (const p of s.pax) {
-    if (p.state === 'queue' || p.state === 'service') p.state = p.stage === 'checkin' ? 'toCheckin' : p.stage === 'passport' ? 'toPassport' : 'toSecurity';
+    if (p.state === 'queue' || p.state === 'service') p.state = p.stage === 'checkin' ? 'toCheckin' : p.stage === 'passport' ? 'toPassport' : p.stage === 'transfer' ? 'toTransfer' : 'toSecurity';
     if (p.state === 'atNeed' || p.state === 'atGate') svc(p.target).users.add(p.id);
     p.tx = p.x;
     p.ty = p.y;
@@ -161,6 +162,7 @@ export function spawnPax(s: GameState, f: Flight, dt: number): void {
         const [x, y] = spawnPoint(e);
         const p = newPax(s, f, true, x + rnd(-0.3, 0.3), y + rnd(-0.3, 0.3));
         p.bags = drawBags();
+        p.premium = Math.random() < premiumShare(f.airline);
         if (!p.bags) { p.state = 'toSecurity'; p.stage = 'security'; } // checked in online, hand luggage only
         if (s.buildings.some((b) => b.kind === 'carpark') && Math.random() < 0.35) { s.cash += FEES.parkingPerCar; s.today.parking += FEES.parkingPerCar; }
       }
@@ -182,7 +184,17 @@ export function spawnPax(s: GameState, f: Flight, dt: number): void {
       p.bags = drawBags();
       f.bagsIn += p.bags;
       p.bagAt = f.bagsIn;
-      if (isBorder(s, f)) { p.state = 'toPassport'; p.stage = 'passport'; }
+      const onward = Math.random() < transferShare(s, f) ? pickConnection(s, f) : undefined;
+      if (onward) {
+        // a connecting passenger: stays airside, bags are transferred to the next flight
+        p.dep = true; p.transfer = true; p.flight = onward.id; p.premium = Math.random() < premiumShare(onward.airline);
+        onward.paxOut++; onward.spawned++;
+        onward.bagsChecked += p.bags;
+        f.bagsIn -= p.bags; p.bagAt = 0;
+        p.state = 'toTransfer'; p.stage = 'transfer';
+        s.today.transfers = (s.today.transfers ?? 0) + 1;
+      }
+      else if (isBorder(s, f)) { p.state = 'toPassport'; p.stage = 'passport'; }
       else if (p.bags) p.state = 'toBaggage';
       else { p.state = 'toExit'; p.stage = 'exit'; }
       // walk out through the gate lounge before following the flow field
@@ -266,6 +278,11 @@ function nextAfterSecurity(s: GameState, p: Pax, f: Flight | undefined): void {
     p.cleared = true; // no passport control to be found: they wander through (the border police will fine you)
   }
   const time = f ? f.dep - s.minute : 0;
+  if (p.premium && time > 60) {
+    p.premium = false; // one lounge visit
+    const l = choose(s, 'lounge', p, (x) => usersOf(x.id) >= (MODULES.lounge.capacity ?? 30));
+    if (goTo(p, l, 'toNeed', 'need')) return;
+  }
   if (time > 45) {
     for (const [bit, kind] of [[NEED_TOILET, 'toilets'], [NEED_FOOD, 'food'], [NEED_SHOP, 'shop']] as const) {
       if (!(p.needs & bit)) continue;
@@ -343,6 +360,15 @@ export function updatePax(s: GameState, dt: number, flights: Map<number, Flight>
         else if (r) joinQueue(p, target, now);
         break;
       }
+      case 'toTransfer': {
+        const target = b ?? choose(s, 'transfer', p);
+        if (!target) { nextAfterSecurity(s, p, f); break; }
+        p.target = target.id;
+        const r = walkTo(s, p, target, dt);
+        if (r === 'lost') lose(p, now);
+        else if (r) joinQueue(p, target, now);
+        break;
+      }
       case 'toPassport': {
         const target = b ?? choose(s, 'passport', p);
         if (!target) { p.cleared = true; afterPassport(s, p, f, onDone); break; }
@@ -353,7 +379,7 @@ export function updatePax(s: GameState, dt: number, flights: Map<number, Flight>
         break;
       }
       case 'queue': {
-        if (!b) { p.state = p.stage === 'checkin' ? 'toCheckin' : p.stage === 'passport' ? 'toPassport' : 'toSecurity'; break; }
+        if (!b) { p.state = p.stage === 'checkin' ? 'toCheckin' : p.stage === 'passport' ? 'toPassport' : p.stage === 'transfer' ? 'toTransfer' : 'toSecurity'; break; }
         const v = svc(b.id);
         const k = v.queue.indexOf(p.id);
         const slots = queueSlots(s, b);
@@ -372,7 +398,9 @@ export function updatePax(s: GameState, dt: number, flights: Map<number, Flight>
         if (now >= (v.serving.get(p.id) ?? 0)) {
           v.serving.delete(p.id);
           v.done.push(now);
-          if (b.kind === 'passport') {
+          if (b.kind === 'transfer') {
+            nextAfterSecurity(s, p, f);
+          } else if (b.kind === 'passport') {
             p.cleared = true;
             afterPassport(s, p, f, onDone);
           } else if (b.kind === 'checkin') {
@@ -525,6 +553,8 @@ function arrive(s: GameState, p: Pax, b: Building, f: Flight | undefined, onDone
   v.users.add(p.id);
   const [dw0, dw1] = m.dwell ?? [5, 10];
   p.timer = s.minute + rnd(dw0, dw1);
+  // departing passengers leave in time to make boarding (lounges call their guests)
+  if (p.dep && f) p.timer = Math.max(s.minute + 2, Math.min(p.timer, readyAt(f) - 40));
   const [ix, iy] = localPoint(b, rnd(0.5, m.w - 0.5), rnd(0.6, m.h - 0.3));
   p.tx = ix; p.ty = iy;
   p.state = 'atNeed';
@@ -533,5 +563,6 @@ function arrive(s: GameState, p: Pax, b: Building, f: Flight | undefined, onDone
     s.cash += spent;
     if (b.kind === 'food') s.today.food += spent; else s.today.retail += spent;
   }
-  p.mood += b.kind === 'seats' ? 3 : 6;
+  if (b.kind === 'lounge') s.today.lounge = (s.today.lounge ?? 0) + 1;
+  p.mood += b.kind === 'seats' ? 3 : b.kind === 'lounge' ? 12 : 6;
 }

@@ -51,9 +51,9 @@ export function buildExpanded(s: GameState): string[] {
     if (b.kind !== 'gate') continue;
     b.zone = b.x <= 61 ? 'border' : 'schengen';
   }
-  put('toilets', 12, 57); put('passport', 19, 57); put('food', 24, 57); put('toilets', 29, 57); put('passport', 33, 57); put('shop', 38, 57);
+  put('transfer', 8, 58); put('toilets', 12, 57); put('passport', 19, 57); put('food', 24, 57); put('toilets', 29, 57); put('passport', 33, 57); put('shop', 38, 57);
   put('seats', 43, 58); put('seats', 46, 58); put('shop', 52, 57); put('passport', 57, 57); put('food', 62, 57);
-  put('toilets', 67, 57); put('passport', 70, 57); put('shop', 74, 57); put('seats', 84, 58); put('seats', 87, 58); put('food', 94, 57);
+  put('toilets', 67, 57); put('passport', 70, 57); put('shop', 74, 57); put('transfer', 78, 58); put('seats', 84, 58); put('seats', 87, 58); put('food', 94, 57); put('lounge', 98, 57);
   for (const x of [41, 44, 47, 50, 53, 56, 59, 62]) put('security', x, 62);
   paintRect(s, 'barrier', 8, 63, 105, 63);
   put('exit', 20, 63);

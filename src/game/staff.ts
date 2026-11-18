@@ -15,6 +15,7 @@ export function positions(s: GameState): Record<Role, number> {
   for (const b of s.buildings) {
     if (b.kind === 'checkin') checkin += MODULES.checkin.servers!;
     else if (b.kind === 'security') security += MODULES.security.servers!;
+    else if (b.kind === 'transfer') security += MODULES.transfer.servers!;
     else if (b.kind.startsWith('stand_')) stands++;
     else if (b.kind === 'bagsort') halls++;
     else if (b.kind === 'busgate') busgates++;
@@ -48,9 +49,10 @@ export function openServers(s: GameState): Map<number, number> {
     security: Math.floor(s.staff.security / k),
   };
   for (const b of [...s.buildings].sort((a, c) => a.id - c.id)) {
-    if (b.kind !== 'checkin' && b.kind !== 'security') continue;
-    const n = Math.min(MODULES[b.kind].servers!, pool[b.kind]);
-    pool[b.kind] -= n;
+    if (b.kind !== 'checkin' && b.kind !== 'security' && b.kind !== 'transfer') continue;
+    const role = b.kind === 'checkin' ? 'checkin' : 'security'; // transfer desks are a security re-check
+    const n = Math.min(MODULES[b.kind].servers!, pool[role]);
+    pool[role] -= n;
     open.set(b.id, n);
   }
   return open;

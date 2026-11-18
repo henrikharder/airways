@@ -819,6 +819,60 @@ def jb_rotunda(b):
     smooth(b.cyl(0, 0, 0.88, 0.91, 0.315, mat(C['accent'], 0.4), 32))
 
 
+def m_transfer(b):
+    """Transfer desk (3×2): a compact screening point for connecting passengers, queue in front (+gy)."""
+    b.box(0.05, 0.1, 0, 2.95, 1.9, 0.012, mat('#55657f', 0.95))
+    b.box(0.2, 0.25, 0, 1.3, 0.8, 0.36, mat(C['white'], 0.35), 0.03)  # compact X-ray
+    b.box(0.32, 0.79, 0.08, 1.18, 0.8, 0.28, mat('#1f2328', 0.5))
+    b.box(0.2, 0.8, 0, 1.3, 1.5, 0.12, mat('#94a3b8', 0.3))  # roller bed
+    tray(b, 0.75, 1.15, 0.12, ('#ef4444', '#1f2937'))
+    for x in (1.55, 1.9):
+        b.box(x, 0.85, 0, x + 0.05, 1.05, 0.5, mat('#e5e7eb', 0.35), 0.01)
+    b.box(1.53, 0.83, 0.5, 1.97, 1.07, 0.56, mat('#e5e7eb', 0.35), 0.01)
+    staff(b, 2.4, 0.6, 1, '#334155')
+    b.box(2.2, 0.15, 0, 2.3, 0.25, 1.0, mat('#2b3240', 0.4))  # sign post
+    b.box(1.7, 0.12, 0.8, 2.95, 0.28, 1.04, mat('#ffcc00', 0.4), 0.02)
+    b.box(1.82, 0.28, 0.85, 2.05, 0.285, 0.99, mat('#111111'))
+    for k in range(4):
+        b.box(2.15 + k * 0.18, 0.28, 0.88, 2.28 + k * 0.18, 0.285, 0.95, mat('#111111'))
+
+
+def m_lounge(b):
+    """Airline lounge (5×4): carpeted, armchairs, a bar and buffet, glass partition, plants."""
+    b.box(0.05, 0.05, 0, 4.95, 3.95, 0.012, mat('#5b4636', 0.95))  # warm carpet
+    b.box(0.15, 0.15, 0.012, 4.85, 3.85, 0.016, mat('#6b5442', 0.95))
+    # glass partition on the front with an entrance gap
+    b.box(0.05, 3.88, 0, 2.0, 3.95, 0.7, mat(C['glass'], 0.05))
+    b.box(3.0, 3.88, 0, 4.95, 3.95, 0.7, mat(C['glass'], 0.05))
+    b.box(0.05, 3.86, 0.68, 4.95, 3.97, 0.74, mat('#2b3240', 0.4))
+    b.box(2.1, 3.9, 0.74, 2.9, 3.97, 0.9, mat('#1e3a8a', 0.4))
+    b.box(2.2, 3.97, 0.77, 2.8, 3.975, 0.87, mat('#fde68a', 0.3, 0.9))
+    # bar and buffet along the back
+    b.box(0.3, 0.2, 0, 2.6, 0.6, 0.3, mat(C['wood'], 0.45), 0.03)
+    b.box(0.28, 0.18, 0.3, 2.62, 0.62, 0.32, mat('#f1f5f9', 0.25))
+    for k in range(6):
+        b.cyl(0.5 + k * 0.35, 0.4, 0.32, 0.38, 0.05, mat(['#f59e0b', '#16a34a', '#be123c'][k % 3], 0.4), 12)
+    b.box(0.3, 0.05, 0.3, 2.6, 0.12, 0.85, mat('#3b2f2a', 0.5))  # back bar shelving
+    for k in range(10):
+        b.cyl(0.4 + k * 0.22, 0.09, 0.4, 0.55, 0.025, mat(['#7c2d12', '#065f46', '#f59e0b', '#e5e7eb'][k % 4], 0.15), 8)
+    staff(b, 1.5, 0.75, 1, '#7c2d12')
+    # armchair clusters with low tables
+    def armchair(x, y, f):
+        dx, dy = ((1, 0), (0, 1), (-1, 0), (0, -1))[f]
+        b.box(x - 0.17, y - 0.17, 0.02, x + 0.17, y + 0.17, 0.16, mat('#334155', 0.7), 0.04)
+        bx, by = x - dx * 0.15, y - dy * 0.15
+        hx, hy = (0.04, 0.17) if dx else (0.17, 0.04)
+        b.box(bx - hx, by - hy, 0.16, bx + hx, by + hy, 0.36, mat('#334155', 0.7), 0.03)
+    for (cx, cy) in ((1.0, 1.6), (2.6, 1.6), (4.0, 1.4), (1.0, 3.0), (2.6, 3.0), (4.0, 2.9)):
+        b.cyl(cx, cy, 0, 0.14, 0.18, mat(C['wood'], 0.4), 16)
+        armchair(cx - 0.45, cy, 0)
+        armchair(cx + 0.45, cy, 2)
+        cup(b, cx + 0.05, cy, 0.14)
+    plant(b, 4.6, 0.4, big=True)
+    plant(b, 0.35, 3.55)
+    screen(b, 3.2, 0.1, 0.45, 4.4, 0.85, '#60a5fa')
+
+
 def m_passport(b):
     """Passport control (3×3): three glass booths with officers, a sign gantry, and a queue lane in front (+gy)."""
     b.box(0.05, 0.1, 0, 2.95, 1.6, 0.012, mat('#55657f', 0.95))
@@ -921,7 +975,7 @@ def m_bagsort(b):
 MODULES = {
     'checkin': (4, 2, m_checkin), 'security': (2, 4, m_security), 'gate': (4, 4, m_gate), 'food': (4, 4, m_food),
     'shop': (3, 3, m_shop), 'toilets': (2, 2, m_toilets), 'seats': (2, 1, m_seats), 'baggage': (3, 4, m_baggage),
-    'entrance': (2, 1, m_entrance), 'bagsort': (6, 4, m_bagsort), 'busgate': (4, 3, m_busgate), 'passport': (3, 3, m_passport), 'exit': (2, 1, m_exit), 'tower': (3, 3, m_tower), 'tree': (1, 1, m_tree)
+    'entrance': (2, 1, m_entrance), 'bagsort': (6, 4, m_bagsort), 'busgate': (4, 3, m_busgate), 'passport': (3, 3, m_passport), 'transfer': (3, 2, m_transfer), 'lounge': (5, 4, m_lounge), 'exit': (2, 1, m_exit), 'tower': (3, 3, m_tower), 'tree': (1, 1, m_tree)
 }
 
 # ---------------------------------------------------------------- aircraft (real dimensions, metres)

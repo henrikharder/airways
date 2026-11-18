@@ -6,7 +6,7 @@ export type TileType = (typeof T)[keyof typeof T];
 export type ModuleKind =
   | 'runway' | 'tower' | 'stand_s' | 'stand_m' | 'stand_l' | 'stand_xl'
   | 'entrance' | 'exit' | 'checkin' | 'security' | 'gate' | 'food' | 'shop' | 'toilets' | 'seats' | 'baggage'
-  | 'carpark' | 'tree' | 'bagsort' | 'busgate' | 'passport';
+  | 'carpark' | 'tree' | 'bagsort' | 'busgate' | 'passport' | 'transfer' | 'lounge';
 
 export type PaintKind = 'taxiway' | 'floor' | 'apron' | 'barrier';
 
@@ -82,7 +82,7 @@ export interface Offer extends Omit<Contract, 'id' | 'since' | 'happiness'> {
 }
 
 export type PaxState =
-  | 'toCheckin' | 'queue' | 'service' | 'toSecurity' | 'toPassport' | 'toNeed' | 'atNeed' | 'toGate' | 'atGate' | 'boarding'
+  | 'toCheckin' | 'queue' | 'service' | 'toSecurity' | 'toPassport' | 'toTransfer' | 'toNeed' | 'atNeed' | 'toGate' | 'atGate' | 'boarding'
   | 'deplaning' | 'toBaggage' | 'atBaggage' | 'toExit' | 'lost';
 
 export interface Pax {
@@ -90,7 +90,7 @@ export interface Pax {
   flight: number;
   dep: boolean;
   state: PaxState;
-  stage: 'checkin' | 'security' | 'passport' | 'need' | 'gate' | 'baggage' | 'exit';
+  stage: 'checkin' | 'security' | 'passport' | 'transfer' | 'need' | 'gate' | 'baggage' | 'exit';
   target: number; // building id (flow field key)
   x: number;
   y: number;
@@ -107,6 +107,8 @@ export interface Pax {
   bags: number; // checked bags (departing) or bags to collect (arriving)
   bagAt: number; // arriving: the flight's delivered-bag count at which this passenger's last bag is on the belt
   cleared?: boolean; // through passport control (border flights only)
+  transfer?: boolean; // connecting from an arriving flight
+  premium?: boolean; // uses lounges
 }
 
 export interface Ledger {
@@ -118,6 +120,8 @@ export interface Ledger {
   upkeep: number;
   construction: number;
   wages: number;
+  transfers?: number; // connecting passengers
+  lounge?: number; // lounge visits
   departures: number;
   passengers: number;
 }
@@ -171,6 +175,7 @@ export interface GameState {
   staff: Record<Role, number>; // people hired per role
   curfew: Curfew;
   goodwill: number; // 0..100, how the neighbours feel about the airport (night noise)
+  tutorial?: { on: boolean; step: number; seen: string[] }; // guided tutorial and one-time introductions
 }
 
 /**

@@ -11,6 +11,7 @@ import { needed, openServers, staffToNeed } from './staff';
 import { isRemote } from './buses';
 import { crossesBorder, isBorder } from './border';
 import { expandedGame } from './expanded';
+import { transferShare } from './hub';
 import { serviceStats } from './passengers';
 import type { Flight } from './types';
 
@@ -220,5 +221,23 @@ describe('borders', () => {
       if (isBorder(s, f)) expect(gate?.zone).not.toBe('schengen');
       else expect(gate?.zone).not.toBe('border');
     }
+  });
+});
+
+describe('hub', () => {
+  it('routes connecting passengers airside and fills lounges', () => {
+    const s = expandedGame();
+    expect(transferShare(s, s.flights.find((f) => f.airline === 'SK')!)).toBeGreaterThan(0);
+    let boardedTransfers = 0;
+    const seen = new Set<number>();
+    for (let m = 0; m < 30 * 60; m += 5) {
+      advance(s, 5);
+      for (const p of s.pax) if (p.transfer && (p.state === 'atGate' || p.state === 'boarding') && !seen.has(p.id)) { seen.add(p.id); boardedTransfers++; } // made it to the gate
+    }
+    const transfers = s.history.reduce((n, d) => n + (d.transfers ?? 0), 0) + (s.today.transfers ?? 0);
+    const lounge = s.history.reduce((n, d) => n + (d.lounge ?? 0), 0) + (s.today.lounge ?? 0);
+    expect(transfers).toBeGreaterThan(50);
+    expect(boardedTransfers).toBeGreaterThan(transfers * 0.7);
+    expect(lounge).toBeGreaterThan(20);
   });
 });

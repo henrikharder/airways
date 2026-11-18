@@ -5,6 +5,7 @@ import { BAGS, MODULES, NIGHT, PAINTS, ROLES, standClassFor, standFits, type Cat
 import { bagsPending, halls, sortRate } from '../game/baggage';
 import { busCount, isRemote } from '../game/buses';
 import { crossesBorder, hasPassportControl, ZONE_LABEL, zoneOf, type GateZone } from '../game/border';
+import { hasTransferDesk, hubShare } from '../game/hub';
 import { CURFEWS, planningMultiplier, setCurfew } from '../game/night';
 import { coverage, needed, openServers, positions, shifts, staffToNeed, wagesPerDay } from '../game/staff';
 import { acceptOffer, airlineColor, airlineName, allocateStands, declineOffer, gateOf, reachableStands, runway, hasTower } from '../game/flights';
@@ -15,6 +16,9 @@ import { createGame } from '../game/newgame';
 import { distanceTo, UNREACHABLE } from '../game/paths';
 import { serviceStats, usersOf } from '../game/passengers';
 import { hasSave, loadGame, saveGame } from '../game/save';
+import { loadSettings, pauseMenu, saveSettings, type Settings } from './menu';
+import { Sound } from './sound';
+import { currentCoach, dismiss, newTutorial, skipTutorial, type Coach } from './tutorial';
 import { advance, upkeepPerDay } from '../game/sim';
 import type { Building, Curfew, GameState, ModuleKind, PaintKind, Role } from '../game/types';
 import { income, profit } from '../game/types';
@@ -32,8 +36,8 @@ const SPEED_LABEL = ['', '1×', '2×', '3×', '4×'];
 
 const PALETTE: { cat: Category | 'tools'; label: string; items: ({ build: ModuleKind } | { paint: PaintKind })[] }[] = [
   { cat: 'airside', label: 'Airside', items: [{ build: 'runway' }, { build: 'tower' }, { paint: 'taxiway' }, { paint: 'apron' }, { build: 'stand_s' }, { build: 'stand_m' }, { build: 'stand_l' }, { build: 'stand_xl' }, { build: 'bagsort' }] },
-  { cat: 'terminal', label: 'Terminal', items: [{ paint: 'floor' }, { build: 'entrance' }, { build: 'checkin' }, { build: 'security' }, { paint: 'barrier' }, { build: 'exit' }, { build: 'passport' }, { build: 'gate' }, { build: 'busgate' }, { build: 'baggage' }] },
-  { cat: 'comfort', label: 'Comforts', items: [{ build: 'food' }, { build: 'shop' }, { build: 'toilets' }, { build: 'seats' }] },
+  { cat: 'terminal', label: 'Terminal', items: [{ paint: 'floor' }, { build: 'entrance' }, { build: 'checkin' }, { build: 'security' }, { paint: 'barrier' }, { build: 'exit' }, { build: 'passport' }, { build: 'gate' }, { build: 'busgate' }, { build: 'transfer' }, { build: 'baggage' }] },
+  { cat: 'comfort', label: 'Comforts', items: [{ build: 'food' }, { build: 'shop' }, { build: 'lounge' }, { build: 'toilets' }, { build: 'seats' }] },
   { cat: 'landside', label: 'Landside', items: [{ build: 'carpark' }, { build: 'tree' }] },
 ];
 
@@ -41,6 +45,7 @@ const ITEM_ICON: Partial<Record<ModuleKind | PaintKind, IconName>> = {
   runway: 'runway', tower: 'tower', taxiway: 'taxiway', apron: 'floor', stand_s: 'stand', stand_m: 'stand', stand_l: 'stand', stand_xl: 'stand',
   floor: 'terminal', entrance: 'entrance', checkin: 'checkin', security: 'security', gate: 'gate', baggage: 'baggage', food: 'food', shop: 'shop',
   toilets: 'toilets', seats: 'seats', carpark: 'car', tree: 'tree', bagsort: 'baggage', busgate: 'bus', passport: 'passport', barrier: 'barrier', exit: 'exit',
+  transfer: 'security', lounge: 'seats',
 };
 
 export class Game {
@@ -58,6 +63,10 @@ export class Game {
   private lastSavedDay = -1;
   private lastSaveAt = 0;
   private savedSig = '';
+  private settings: Settings = loadSettings();
+  private sound = new Sound(this.settings);
+  private coach: Coach | null = null;
+  private lastNews: GameState['news'][number] | null = null;
   private warnings: string[] = [];
   private warnStamp = -1;
   private keys = new Set<string>();
@@ -72,6 +81,7 @@ export class Game {
         <div id="viewbar"><button data-act="heat" title="Crowding heatmap (H)">${icon('gauge')} Crowding</button></div>
         <aside id="panel"><nav id="tabs"></nav><div id="view"></div></aside>
         <div id="tip" hidden></div>
+        <div id="coach" hidden></div>
       </main>
       <footer id="ticker"></footer>
       <div id="toasts"></div><div id="overlay" hidden></div>`;
@@ -141,6 +151,8 @@ export class Game {
 
   private start(s: GameState): void {
     this.s = s;
+    this.coach = null;
+    this.lastNews = s.news[0] ?? null;
     this.selected = null;
     this.tool = { t: 'select' };
     this.overlay(null);
@@ -172,7 +184,14 @@ export class Game {
         if (!typing) this.renderPanel();
         updateBoards(this.$('#view'), this.s);
         this.scene.setBadges(this.badges());
+        this.renderCoach();
+        // announcement chime for good news, a low tone for bad
+        if (this.s.news.length && this.s.news[0] !== this.lastNews) {
+          if (this.lastNews) this.sound.play(this.s.news[0].tone === 'bad' ? 'alert' : 'chime');
+          this.lastNews = this.s.news[0];
+        }
       }
+      this.sound.update(this.s, !!this.speed && !!this.$('#overlay').hidden);
       const day = Math.floor(this.s.minute / 1440);
       // save on a new day, soon after building or signing, and every 30 s
       const sig = `${layoutStamp()}:${this.s.contracts.length}`;
@@ -233,13 +252,28 @@ export class Game {
       if (!this.s || (e.target as HTMLElement).closest('input, select')) return;
       this.keys.add(e.key.toLowerCase());
       if (e.key === 'r' || e.key === 'R') { this.rot = (this.rot + 1) % 4; }
-      else if (e.key === 'Escape') { this.setTool({ t: 'select' }); this.selected = null; this.renderPanel(); }
+      else if (e.key === 'Escape') {
+        if (!this.$('#overlay').hidden) { if (this.$('#overlay').querySelector('.menu')) this.overlay(null); }
+        else if (this.tool.t === 'select' && !this.selected) this.openMenu('main');
+        else { this.setTool({ t: 'select' }); this.selected = null; this.renderPanel(); }
+      }
       else if (e.code === 'Space') { e.preventDefault(); this.setSpeed(this.speed ? 0 : 1); }
       else if (/^Digit[0-4]$/.test(e.code)) this.setSpeed(Number(e.code.slice(5)));
       else if (e.key === 'b') this.setTool({ t: 'bulldoze' });
       else if (e.key === 'h') this.toggleHeat();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
+    const unlock = () => this.sound.unlock();
+    window.addEventListener('pointerdown', unlock);
+    window.addEventListener('keydown', unlock);
+    this.root.addEventListener('input', (e) => {
+      const el = e.target as HTMLInputElement;
+      const k = el.dataset.setting as keyof Settings | undefined;
+      if (!k) return;
+      (this.settings as unknown as Record<string, number | boolean>)[k] = el.type === 'checkbox' ? el.checked : Number(el.value);
+      saveSettings(this.settings);
+      this.sound.apply(this.settings);
+    });
     document.addEventListener('visibilitychange', () => { if (document.hidden && this.s) saveGame(this.s); });
   }
 
@@ -292,7 +326,7 @@ export class Game {
       const [x, y] = this.buildOrigin(t.kind, b);
       const r = place(this.s, t.kind, x, y, this.rot);
       if (!r.ok) this.toast(r.reason ?? 'Cannot build here', 'err');
-      else if (t.kind === 'runway' || t.kind === 'tower') this.setTool({ t: 'select' });
+      else { this.sound.play('build'); if (t.kind === 'runway' || t.kind === 'tower') this.setTool({ t: 'select' }); }
       return;
     }
     if (t.t === 'paint') {
@@ -348,7 +382,16 @@ export class Game {
     const el = (e.target as HTMLElement).closest('[data-act]') as HTMLElement | null;
     if (!el) return;
     const d = el.dataset;
+    this.sound.play('click');
     switch (d.act) {
+      case 'coach-show': return this.coachShow();
+      case 'coach-next': if (this.coach) dismiss(this.s, this.coach); this.coach = null; return this.renderCoach();
+      case 'coach-skip': skipTutorial(this.s); this.coach = null; return this.renderCoach();
+      case 'menu': return this.openMenu((d.page as 'main') ?? 'main');
+      case 'menu-close': return this.overlay(null);
+      case 'save-slot': { const ok = saveGame(this.s, Number(d.slot)); this.toast(ok ? 'Game saved' : 'Could not save (storage full?)', ok ? 'ok' : 'err'); return this.openMenu('save'); }
+      case 'load-slot': { const g = loadGame(Number(d.slot)); if (g) { this.start(g); this.toast('Game loaded'); } else this.toast('That save could not be loaded', 'err'); return; }
+      case 'restart-tutorial': this.s.tutorial = newTutorial(true); this.overlay(null); return this.renderCoach();
       case 'tool': {
         if (d.build) this.setTool({ t: 'build', kind: d.build as ModuleKind });
         else if (d.paint) this.setTool({ t: 'paint', paint: d.paint as PaintKind });
@@ -360,7 +403,7 @@ export class Game {
       case 'heat': return this.toggleHeat();
       case 'speed': return this.setSpeed(Number(d.speed));
       case 'tab': this.tab = d.tab as Tab; this.selected = null; return this.renderPanel();
-      case 'accept': { const err = acceptOffer(this.s, Number(d.id)); if (err) this.toast(err, 'err'); else this.toast('Contract signed'); return this.renderPanel(); }
+      case 'accept': { const err = acceptOffer(this.s, Number(d.id)); if (err) this.toast(err, 'err'); else { this.toast('Contract signed'); this.sound.play('cash'); } return this.renderPanel(); }
       case 'decline': declineOffer(this.s, Number(d.id)); return this.renderPanel();
       case 'hire': {
         const r = d.role as Role;
@@ -417,7 +460,7 @@ export class Game {
       <div class="spacer"></div>
       <div class="clock"><span>Day ${day}</span><b>${clock(s.minute)}</b></div>
       <div class="speed">${SPEED_LABEL.map((l, i) => `<button class="${this.speed === i ? 'on' : ''}" data-act="speed" data-speed="${i}" title="${i ? `Speed ${i}` : 'Pause (Space)'}">${i ? l : icon('pause')}</button>`).join('')}</div>
-      <button class="icon" data-act="new" title="New game">${icon('menu')}</button>`;
+      <button class="icon" data-act="menu" data-page="main" title="Menu (Esc)">${icon('menu')}</button>`;
   }
 
   private renderPalette(): void {
@@ -562,7 +605,8 @@ export class Game {
       [s.buildings.some((b) => b.kind.startsWith('stand_') && b.link) && reachableStands(s).size > 0, 'Add a stand and taxiway', 'Place a stand next to the gate (the yellow square shows where aircraft enter) and paint taxiways linking it to the runway.'],
       [s.contracts.length > 0, 'Sign an airline', 'Open the Airlines tab and accept an offer your stands can handle.'],
     ];
-    const next = steps.findIndex(([d]) => !d);
+    // the guided tutorial replaces the checklist while it runs
+    const next = s.tutorial?.on ? -1 : steps.findIndex(([d]) => !d);
     const b = s.board;
     const prog = progress(s);
     const yesterday = s.history[s.history.length - 1];
@@ -647,6 +691,14 @@ export class Game {
           ${this.kpi('To carousels', num(Math.round(toBelt)))}
         </section>
         <p class="small muted">Check-in hands bags to the baggage hall; trains carry them to the aircraft, which wait up to ${BAGS.maxWait} minutes for them. ${halls(s).length ? '' : 'Without a hall a small manual team sorts about 3 bags a minute.'}</p>
+      </section>
+      <section class="card"><h3>${icon('plane')} Hub</h3>
+        <section class="kpis">
+          ${this.kpi('Transfers today', num(s.today.transfers ?? 0))}
+          ${this.kpi('Connecting share', `${Math.round(hubShare(s) * 100)}%`, hasTransferDesk(s) ? '' : 'warn')}
+          ${this.kpi('Lounge visits', num(s.today.lounge ?? 0))}
+        </section>
+        <p class="small muted">${hasTransferDesk(s) ? 'Connecting passengers stay airside: transfer desk, shops, gate. Network airlines connect more; serving more destinations grows the share (up to 25%).' : 'Build a transfer desk airside to let airlines route connecting passengers through you.'} Premium travellers use a lounge if there is one with room.</p>
       </section>
       <section class="card"><h3>${icon('passport')} Borders</h3>
         <section class="kpis">
@@ -740,6 +792,45 @@ export class Game {
     this.overlay(`<div class="modal small"><h2>Game over</h2><p>${esc(this.s.news[0]?.text ?? '')}</p><div class="actions"><button class="btn primary" data-act="new">New airport</button></div></div>`);
   }
 
+  // ---------------------------------------------------------------- menu and tutorial
+
+  private openMenu(page: 'main' | 'save' | 'load' | 'settings'): void {
+    if (!this.s) return;
+    this.overlay(pauseMenu(page, this.settings));
+  }
+
+  private renderCoach(): void {
+    const box = this.$('#coach');
+    for (const el of this.root.querySelectorAll('.coach-pulse')) el.classList.remove('coach-pulse');
+    const c = this.s ? currentCoach(this.s, this.settings.tips) : null;
+    if (c?.key !== this.coach?.key && c) this.sound.play('chime');
+    this.coach = c;
+    if (!c) { box.hidden = true; return; }
+    if (c.target) for (const el of this.root.querySelectorAll(c.target)) el.classList.add('coach-pulse');
+    const key = `${c.key}`;
+    if (box.dataset.key === key && !box.hidden) return;
+    box.dataset.key = key;
+    box.hidden = false;
+    box.innerHTML = `<div class="coach-h">${c.step ? `<span class="coach-n">${c.step[0]}/${c.step[1]}</span>` : '<span class="coach-n">New</span>'}<b>${esc(c.title)}</b></div>
+      <p>${esc(c.body)}</p>
+      <div class="actions">${c.show ? '<button class="btn primary sm" data-act="coach-show">Show me</button>' : ''}
+        ${c.intro || !c.show ? `<button class="btn sm" data-act="coach-next">${c.step && c.step[0] === 1 ? 'Start' : c.intro ? 'Got it' : 'Next'}</button>` : ''}
+        ${c.step ? '<button class="btn sm" data-act="coach-skip">Skip tutorial</button>' : ''}</div>`;
+  }
+
+  /** "Show me": pick the tool or open the tab the coach card is about. */
+  private coachShow(): void {
+    const sh = this.coach?.show;
+    if (!sh) return;
+    if ('build' in sh) this.setTool({ t: 'build', kind: sh.build });
+    else if ('paint' in sh) this.setTool({ t: 'paint', paint: sh.paint });
+    else if ('tab' in sh) { this.tab = sh.tab; this.selected = null; this.renderPanel(); }
+    else if (sh.act === 'heat') { if (!this.scene.heatmap) this.toggleHeat(); }
+    else if (sh.act === 'speed') this.setSpeed(1);
+    if (this.coach?.intro) { dismiss(this.s, this.coach); this.coach = null; }
+    this.renderCoach();
+  }
+
   private showStart(): void {
     const cities = [...AIRPORTS].sort((a, b) => b.pop * b.wealth - a.pop * a.wealth);
     this.overlay(`<div class="modal start">
@@ -750,6 +841,7 @@ export class Game {
         <label>Code<input id="ng-code" value="CPN" maxlength="3" class="upper"></label>
         <label class="wide">Near which city<select id="ng-city">${cities.map((a) => `<option value="${a.iata}" ${a.iata === 'CPH' ? 'selected' : ''}>${esc(a.city)} (${a.country})</option>`).join('')}</select></label>
       </div>
+      <label class="toggle"><input type="checkbox" id="ng-tutorial" ${hasSave() ? '' : 'checked'}> Guided tutorial for my first airport</label>
       <div class="actions"><button class="btn primary big" data-act="start">Break ground</button></div>
       <p class="muted small">Drag to pan, scroll to zoom, R to rotate, Space to pause. Bigger and richer cities bring more demand.</p>
     </div>`);
@@ -760,6 +852,7 @@ export class Game {
     const code = ((this.$('#ng-code') as HTMLInputElement).value.trim().toUpperCase() || 'NEW').slice(0, 3);
     const city = (this.$('#ng-city') as HTMLSelectElement).value;
     const s = createGame({ name, code, city });
+    s.tutorial = newTutorial((this.$('#ng-tutorial') as HTMLInputElement | null)?.checked ?? false);
     saveGame(s);
     this.start(s);
   }

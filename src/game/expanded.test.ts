@@ -36,6 +36,8 @@ describe('expanded airport', () => {
       night: dep.filter((f) => f.night).length,
       remote: dep.filter((f) => remoteIds.has(f.stand ?? -1)).length,
       remoteBoarded: dep.filter((f) => remoteIds.has(f.stand ?? -1)).reduce((n, f) => n + f.boarded, 0),
+      transfers: s.history.reduce((n, d) => n + (d.transfers ?? 0), 0) + (s.today.transfers ?? 0),
+      lounge: s.history.reduce((n, d) => n + (d.lounge ?? 0), 0) + (s.today.lounge ?? 0),
       peak, lost, maxCheckinWait: Math.round(maxCheckinWait), maxSecurityWait: Math.round(maxSecurityWait), maxPassportWait: Math.round(maxPassportWait), maxHeld,
       rating: Math.round(s.rating), goodwill: Math.round(s.goodwill), cash: Math.round(s.cash),
       days: s.history.map((d) => ({ day: d.day + 1, dep: d.departures, pax: d.passengers, profit: Math.round(d.landing + d.paxFees + d.food + d.retail + d.parking - d.upkeep - d.wages) })),
