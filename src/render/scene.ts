@@ -8,23 +8,13 @@ import { airlineColor, runway } from '../game/flights';
 import { footprint, getLayout, idx, localPoint, standPoints } from '../game/grid';
 import type { Building, GameState, ModuleKind } from '../game/types';
 import { T } from '../game/types';
+import { AC_SIZE, isoX, isoY, screenToGrid, TH, TW, ZPX } from './iso';
+import { Lights } from './lights';
 
-export const TW = 32; // tile diamond width at zoom 1
-export const TH = 16;
-const ZPX = 20.2; // screen px per tile of height at zoom 1
 const SRC_TILE = 128; // tile width in rendered sprites (manifest scale 1); matches TILE_PX in art/build.py
 
 type Frame = { w: number; h: number; ax: number; ay: number; scale: number };
 const FRAMES = manifest as Record<string, Frame>;
-
-export const isoX = (x: number, y: number) => ((x - y) * TW) / 2;
-export const isoY = (x: number, y: number) => ((x + y) * TH) / 2;
-
-export function screenToGrid(sx: number, sy: number): [number, number] {
-  const a = sy / (TH / 2);
-  const b = sx / (TW / 2);
-  return [(a + b) / 2, (a - b) / 2];
-}
 
 const COLORS = {
   grass: [0x7cc96a, 0x76c464, 0x82cf70],
@@ -37,11 +27,17 @@ const COLORS = {
   parking: 0x6a707a,
 };
 
-/** Aircraft length, span and fuselage diameter in tiles (mirrors AIRCRAFT in art/build.py). */
-const AC_SIZE: Record<string, [number, number, number]> = {
-  AT76: [5.44, 5.42, 0.56], E295: [8.3, 7.02, 0.6], A20N: [7.52, 7.16, 0.79], B38M: [7.9, 7.18, 0.75],
-  B789: [12.56, 12.02, 1.15], A359: [13.36, 12.96, 1.19], A388: [14.54, 15.96, 1.42],
-};
+
+/** Car park bay rows (y offsets inside the 6×6 lot) and the way cars face when parked nose-in. */
+const CARPARK_ROWS: [number, number, 1 | 3][] = [[0.15, 1.15, 3], [2.45, 3.45, 1], [3.45, 4.45, 3]];
+const CAR_COLORS = [0xf8fafc, 0xcbd5e1, 0x475569, 0x1f2937, 0xdc2626, 0x2563eb, 0x0f766e, 0xd6c7a1, 0x7c2d12];
+const hash01 = (a: number, b: number) => { const v = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453; return v - Math.floor(v); };
+
+interface Traffic { sp: Sprite; x: number; y: number; dir: 1 | -1; speed: number; len: number }
+
+interface Vehicle { sp: Sprite; base?: string; path: [number, number][]; i: number; x: number; y: number; leaving: boolean }
+
+const facingOf = (dx: number, dy: number) => (Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 0 : 2) : dy > 0 ? 1 : 3);
 
 export interface Badge { key: string; x: number; y: number; text: string; color: number }
 
@@ -63,6 +59,8 @@ export class Scene {
   private heatAt = 0;
   heatmap = false;
   private overlay = new Graphics();
+  private lights = new Lights();
+  private top = new Container();
   private labels = new Container();
   private labelPool = new Map<string, Container>();
   private labelAt = new Map<string, [number, number]>();
@@ -70,7 +68,10 @@ export class Scene {
   private textures = new Map<string, Texture>();
   private buildingSprites = new Map<number, Container>();
   private aircraftSprites = new Map<number, Container>();
-  private serviceSprites = new Map<string, Sprite>();
+  private vehicles = new Map<string, Vehicle>();
+  private traffic: Traffic[] = [];
+  private parked = new Map<string, Sprite>();
+  private bridges = new Map<number, { c: Container; g: Graphics; rot: Sprite; cab: Sprite; len: number; drawn: string }>();
   private paxSprites = new Map<number, Sprite>();
   private ghostSprite: Sprite | null = null;
   private groundStamp = -1;
@@ -81,12 +82,31 @@ export class Scene {
     await this.app.init({ resizeTo: host, background: 0x2e5a34, antialias: true, autoDensity: true, resolution: window.devicePixelRatio || 1 });
     host.appendChild(this.app.canvas);
     this.objects.sortableChildren = true;
-    this.world.addChild(this.ground, this.heat, this.objects, this.overlay, this.labels);
-    this.app.stage.addChild(this.world);
+    this.world.addChild(this.ground, this.heat, this.objects);
+    // night shade over the world, then lights and UI overlays that follow the world's transform
+    this.top.addChild(this.lights.layer, this.overlay, this.labels);
+    this.app.stage.addChild(this.world, this.lights.shade, this.top);
     const base = import.meta.env.BASE_URL;
-    const names = Object.keys(FRAMES);
+    // aircraft are most of the texture memory, so each type loads the first time it appears
+    const names = Object.keys(FRAMES).filter((n) => !n.startsWith('ac_'));
     const loaded = await Assets.load(names.map((n) => ({ alias: n, src: `${base}sprites/${n}.png` })));
     for (const n of names) this.textures.set(n, loaded[n] as Texture);
+  }
+
+  private aircraftLoading = new Set<string>();
+
+  /** True once the sprites for an aircraft type are ready; starts loading them otherwise. */
+  private aircraftReady(type: string): boolean {
+    if (this.textures.has(`ac_${type}_0`)) return true;
+    if (!this.aircraftLoading.has(type)) {
+      this.aircraftLoading.add(type);
+      const base = import.meta.env.BASE_URL;
+      const names = Object.keys(FRAMES).filter((n) => n.startsWith(`ac_${type}_`));
+      Assets.load(names.map((n) => ({ alias: n, src: `${base}sprites/${n}.png` }))).then((loaded) => {
+        for (const n of names) this.textures.set(n, loaded[n] as Texture);
+      }).catch(() => this.aircraftLoading.delete(type)); // try again next frame
+    }
+    return false;
   }
 
   frameScale(name: string): number {
@@ -211,7 +231,10 @@ export class Scene {
     // parking bays
     for (const b of s.buildings) {
       if (b.kind !== 'carpark') continue;
-      for (let k = 1; k < b.w; k++) this.line(g, b.x + k, b.y + 0.4, b.x + k, b.y + b.h - 0.4, 0xffffff, 0.6, 0.7);
+      for (const [y0, y1] of CARPARK_ROWS) {
+        for (let k = 0; k <= 11; k++) this.line(g, b.x + 0.25 + k * 0.5, b.y + y0, b.x + 0.25 + k * 0.5, b.y + y1, 0xffffff, 0.6, 0.75);
+        this.line(g, b.x + 0.25, b.y + y0, b.x + 5.75, b.y + y0, 0xffffff, 0.5, 0.5);
+      }
     }
     // terminal walls: low glass edges where floor meets the outside
     for (let y = 0; y < s.H; y++) for (let x = 0; x < s.W; x++) {
@@ -260,18 +283,6 @@ export class Scene {
       c.addChild(sp);
     }
     let z = b.x + b.y + b.w + b.h;
-    if (b.kind.startsWith('stand_')) {
-      if (!b.link) return null;
-      // jet bridge from the terminal edge towards the aircraft door
-      const mm = MODULES[b.kind];
-      const pts = [localPoint(b, mm.w / 2 + 1, mm.h), localPoint(b, mm.w / 2 + 2, mm.h), localPoint(b, mm.w / 2 + 1, mm.h - 3), localPoint(b, mm.w / 2 + 2, mm.h - 3)];
-      const ox = Math.min(...pts.map((p) => p[0]));
-      const oy = Math.min(...pts.map((p) => p[1]));
-      const sp = this.makeSprite(`jetbridge_${(b.rot + 3) % 4}`);
-      sp.position.set(isoX(ox, oy), isoY(ox, oy));
-      c.addChild(sp);
-      z = ox + oy + 4;
-    }
     if (!c.children.length) return null;
     c.zIndex = z;
     return c;
@@ -299,9 +310,10 @@ export class Scene {
     const live = new Set<number>();
     for (const f of s.flights) {
       if (f.phase === 'scheduled' || f.phase === 'departed' || f.phase === 'cancelled') continue;
+      const type = spriteType(f.typeId);
+      if (!this.aircraftReady(type)) continue;
       live.add(f.id);
       let c = this.aircraftSprites.get(f.id);
-      const type = spriteType(f.typeId);
       const key = `ac_${type}_${f.facing}`;
       if (!c || c.label !== key) {
         c?.destroy({ children: true });
@@ -342,10 +354,10 @@ export class Scene {
    * forward hold, catering at the rear service door, a fuel truck by the engine,
    * cones, ground crew, and the pushback tug near departure. Purely visual.
    */
-  private syncService(s: GameState): void {
-    const want = new Map<string, [string, number, number]>(); // key -> sprite, x, y
+  private syncService(s: GameState, dtReal: number): void {
+    // key -> final sprite and spot; vehicles that drive also carry their approach path
+    const want = new Map<string, { sprite: string; x: number; y: number; base?: string; path?: [number, number][] }>();
     const now = s.minute;
-    const facingOf = (dx: number, dy: number) => (Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 0 : 2) : dy > 0 ? 1 : 3);
     for (const f of s.flights) {
       if ((f.phase !== 'parked' && f.phase !== 'pushback') || f.stand === null) continue;
       const st = getLayout(s).byId.get(f.stand);
@@ -357,7 +369,17 @@ export class Scene {
       const side = [o[0] - lx[0], o[1] - lx[1]];
       const at = (u: number, v: number): [number, number] => [f.x + side[0] * u + fwd[0] * v, f.y + side[1] * u + fwd[1] * v];
       const face = (du: number, dv: number) => facingOf(side[0] * du + fwd[0] * dv, side[1] * du + fwd[1] * dv);
-      const put = (name: string, sprite: string, u: number, v: number) => want.set(`${f.id}:${name}`, [sprite, ...at(u, v)]);
+      const put = (name: string, sprite: string, u: number, v: number) => {
+        const [x, y] = at(u, v);
+        want.set(`${f.id}:${name}`, { sprite, x, y });
+      };
+      // drive in from beyond the wingtip on the service side, ending with the final heading
+      const U = St / 2 + 2.5;
+      const drive = (name: string, base: string, u: number, v: number, du: number, dv: number) => {
+        const pts: [number, number][] = du ? [[U, v - 3], [U, v], [u, v]] : [[U, v - 4], [u, v - 4], [u, v]];
+        const [x, y] = at(u, v);
+        want.set(`${f.id}:${name}`, { sprite: `${base}_${face(du, dv)}`, x, y, base, path: pts.map(([a, b]) => at(a, b)) });
+      };
       const parked = f.phase === 'parked';
       const since = now - f.arr, left = f.dep - now;
       if (parked) {
@@ -367,27 +389,239 @@ export class Scene {
         put('crew1', `crew_${face(-1, 0)}_0`, D / 2 + 1.3, Lt * 0.22 - 0.45);
         put('crew2', `crew_${face(0, -1)}_0`, -D / 2 - 0.2, Lt / 2 - 0.2);
         if (left > 8) {
-          put('belt', `gse_belt_${face(-1, 0)}`, D / 2 + 0.85, Lt * 0.22);
-          put('bags', `gse_bags_${face(0, 1)}`, D / 2 + 1.9, Lt * 0.22 + 1.0);
+          drive('belt', 'gse_belt', D / 2 + 0.85, Lt * 0.22, -1, 0);
+          if (since > 2) drive('bags', 'gse_bags', D / 2 + 1.9, Lt * 0.22 + 1.0, 0, 1);
         }
-        if (since > 6 && left > 20) put('fuel', `gse_fuel_${face(0, 1)}`, St * 0.34, 0.2);
-        if (since > 8 && left > 14) put('catering', `gse_catering_${face(-1, 0)}`, D / 2 + 0.95, -Lt * 0.36);
+        if (since > 6 && left > 20) drive('fuel', 'gse_fuel', St * 0.34, 0.2, 0, 1);
+        if (since > 8 && left > 14) drive('catering', 'gse_catering', D / 2 + 0.95, -Lt * 0.36, -1, 0);
       }
       if ((parked && left < 12) || f.phase === 'pushback') put('tug', `gse_tug_${face(0, -1)}`, 0, Lt / 2 + 0.7);
     }
-    for (const [key, [name, x, y]] of want) {
-      let sp = this.serviceSprites.get(key);
-      if (!sp || sp.label !== name) {
-        sp?.destroy();
-        sp = this.makeSprite(name);
-        sp.label = name;
+    const step = 2.4 * dtReal; // tiles per real second
+    for (const [key, w] of want) {
+      let v = this.vehicles.get(key);
+      if (!v) {
+        const start = w.path ? w.path[0] : ([w.x, w.y] as [number, number]);
+        const sp = this.makeSprite(w.sprite);
         this.objects.addChild(sp);
-        this.serviceSprites.set(key, sp);
+        v = { sp, base: w.base, path: w.path ?? [], i: 1, x: start[0], y: start[1], leaving: false };
+        this.vehicles.set(key, v);
       }
-      sp.position.set(isoX(x, y), isoY(x, y));
-      sp.zIndex = x + y + 0.2;
+      if (!w.path) { v.x = w.x; v.y = w.y; this.setFrame(v.sp, w.sprite); }
+      else if (!v.leaving) this.moveVehicle(v, step, w.sprite);
     }
-    for (const [key, sp] of this.serviceSprites) if (!want.has(key)) { sp.destroy(); this.serviceSprites.delete(key); }
+    for (const [key, v] of this.vehicles) {
+      if (want.has(key)) continue;
+      if (!v.base) { v.sp.destroy(); this.vehicles.delete(key); continue; }
+      if (!v.leaving) {
+        // head back out the way it came, from wherever it got to
+        v.leaving = true;
+        v.path = [[v.x, v.y], ...v.path.slice(0, v.i).reverse()];
+        v.i = 1;
+      }
+      if (this.moveVehicle(v, step, null)) { v.sp.destroy(); this.vehicles.delete(key); }
+    }
+    for (const v of this.vehicles.values()) {
+      v.sp.position.set(isoX(v.x, v.y), isoY(v.x, v.y));
+      v.sp.zIndex = v.x + v.y + 0.2;
+    }
+  }
+
+  /**
+   * Landside life: cars, taxis and buses on the two-lane road (busier when the
+   * terminal is busy), and car parks that fill up with passengers' cars.
+   */
+  private syncTraffic(s: GameState, dtReal: number): void {
+    const activity = Math.min(1, s.pax.filter((p) => p.dep).length / 160);
+    const lanes: [number, 1 | -1][] = [[s.H - 3 + 0.5, -1], [s.H - 2 + 0.5, 1]];
+    for (const [y, dir] of lanes) {
+      if (s.tiles[idx(s, 0, Math.floor(y))] !== T.Road) continue;
+      if (Math.random() < (0.15 + 0.6 * activity) * dtReal) {
+        const x = dir > 0 ? -3 : s.W + 3;
+        const clear = this.traffic.every((t) => t.y !== y || Math.abs(t.x - x) > 3);
+        if (clear) {
+          const r = Math.random();
+          const kind = r < 0.1 ? 'bus' : r < 0.28 ? 'taxi' : 'car';
+          const sp = this.makeSprite(`${kind}_${dir > 0 ? 0 : 2}`);
+          if (kind === 'car') sp.tint = CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)];
+          this.objects.addChild(sp);
+          this.traffic.push({ sp, x, y, dir, speed: kind === 'bus' ? 2.2 : 2.6 + Math.random() * 1.2, len: kind === 'bus' ? 2.4 : 0.92 });
+        }
+      }
+    }
+    // simple car following: never close within a car length of the one ahead
+    for (const t of this.traffic) {
+      let gap = Infinity;
+      for (const o of this.traffic) {
+        if (o === t || o.y !== t.y) continue;
+        const d = (o.x - t.x) * t.dir;
+        if (d > 0) gap = Math.min(gap, d - (o.len + t.len) / 2);
+      }
+      const v = Math.max(0, Math.min(t.speed, (gap - 0.5) * 2));
+      t.x += t.dir * v * dtReal;
+      t.sp.position.set(isoX(t.x, t.y), isoY(t.x, t.y));
+      t.sp.zIndex = t.x + t.y + 0.3;
+    }
+    this.traffic = this.traffic.filter((t) => {
+      const out = t.x < -4 || t.x > s.W + 4;
+      if (out) t.sp.destroy();
+      return !out;
+    });
+    // parked cars: occupancy follows the departing passengers in the building
+    const want = new Set<string>();
+    const occ = 0.12 + 0.83 * activity;
+    for (const b of s.buildings) {
+      if (b.kind !== 'carpark') continue;
+      CARPARK_ROWS.forEach(([y0, y1, facing], row) => {
+        for (let k = 0; k < 11; k++) {
+          const i = row * 11 + k;
+          if (hash01(i, b.id) >= occ) continue;
+          const key = `${b.id}:${i}`;
+          want.add(key);
+          if (this.parked.has(key)) continue;
+          const sp = this.makeSprite(`car_${facing}`);
+          sp.tint = CAR_COLORS[Math.floor(hash01(b.id, i) * CAR_COLORS.length)];
+          const x = b.x + 0.5 + k * 0.5, y = b.y + (y0 + y1) / 2;
+          sp.position.set(isoX(x, y), isoY(x, y));
+          sp.zIndex = x + y + 0.2;
+          this.objects.addChild(sp);
+          this.parked.set(key, sp);
+        }
+      });
+    }
+    for (const [key, sp] of this.parked) if (!want.has(key)) { sp.destroy(); this.parked.delete(key); }
+  }
+
+  /** Advance a vehicle along its path; true when it reached the end. */
+  private moveVehicle(v: Vehicle, step: number, parked: string | null): boolean {
+    while (step > 0 && v.i < v.path.length) {
+      const [tx, ty] = v.path[v.i];
+      const dx = tx - v.x, dy = ty - v.y;
+      const d = Math.hypot(dx, dy);
+      if (d > 1e-3) this.setFrame(v.sp, `${v.base}_${facingOf(dx, dy)}`);
+      if (d <= step) { v.x = tx; v.y = ty; v.i++; step -= d; }
+      else { v.x += (dx / d) * step; v.y += (dy / d) * step; step = 0; }
+    }
+    const done = v.i >= v.path.length;
+    if (done && parked) this.setFrame(v.sp, parked);
+    return done;
+  }
+
+  private setFrame(sp: Sprite, name: string): void {
+    if (sp.label === name) return;
+    sp.label = name;
+    sp.texture = this.textures.get(name) ?? sp.texture;
+    const fr = FRAMES[name];
+    if (fr) sp.anchor.set(fr.ax / fr.w, fr.ay / fr.h);
+    sp.scale.set(this.frameScale(name));
+  }
+
+  /**
+   * Telescoping jet bridges: a rotunda at the terminal edge, a tunnel that runs
+   * alongside the nose, and a cab that mates with the L1 door. The bridge extends
+   * when an aircraft is on stand and retracts before pushback.
+   */
+  private syncBridges(s: GameState, dtReal: number): void {
+    const live = new Set<number>();
+    for (const b of s.buildings) {
+      if (!b.kind.startsWith('stand_') || !b.link) continue;
+      live.add(b.id);
+      const m = MODULES[b.kind];
+      const f = s.flights.find((x) => x.stand === b.id && (x.phase === 'parked' || x.phase === 'parking'));
+      const [Lt, , D] = f ? AC_SIZE[spriteType(f.typeId)] ?? AC_SIZE.A20N : AC_SIZE.A20N;
+      const docked = f && f.phase === 'parked' && f.dep - s.minute > 3;
+      // local stand coordinates: the aircraft parks at (w/2, h/2) nose towards +y (the terminal)
+      const lineX = m.w / 2 + D / 2 + 0.7;
+      const start = m.h - 0.3;
+      const want = docked ? Math.max(0.9, start - (m.h / 2 + Lt / 2 - 1.3 * D)) : 1.0;
+      let st = this.bridges.get(b.id);
+      if (!st) {
+        const c = new Container();
+        const g = new Graphics();
+        const rot = this.makeSprite('jbrot');
+        const cab = this.makeSprite('jbcab_0');
+        c.addChild(g, rot, cab);
+        this.objects.addChild(c);
+        st = { c, g, rot, cab, len: want, drawn: '' };
+        this.bridges.set(b.id, st);
+      }
+      const step = 1.2 * dtReal; // tiles per real second
+      st.len += Math.max(-step, Math.min(step, want - st.len));
+      const key = `${b.x}:${b.y}:${b.rot}:${st.len.toFixed(3)}`;
+      if (key === st.drawn) continue;
+      st.drawn = key;
+      const P = (lx: number, ly: number) => localPoint(b, lx, ly);
+      const endY = start - st.len;
+      // cab faces local -x (towards the fuselage)
+      const a = P(0, 0), bx = P(1, 0);
+      const dx = a[0] - bx[0], dy = a[1] - bx[1];
+      const cabFacing = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 0 : 2) : dy > 0 ? 1 : 3;
+      st.cab.texture = this.textures.get(`jbcab_${cabFacing}`) ?? st.cab.texture;
+      const cf = FRAMES[`jbcab_${cabFacing}`];
+      if (cf) st.cab.anchor.set(cf.ax / cf.w, cf.ay / cf.h);
+      const cabAt = P(lineX - 0.45, endY);
+      const rotAt = P(lineX, start);
+      st.cab.position.set(isoX(...cabAt), isoY(...cabAt));
+      st.rot.position.set(isoX(...rotAt), isoY(...rotAt));
+      // tunnel: outer section from the rotunda, inner section sliding out of it
+      const g = st.g.clear();
+      const outerLen = Math.min(st.len, 1.1);
+      const sections: [number, number, number, number, number][] = [
+        [start - 0.2, start - outerLen, 0.25, 0.52, 0.93],
+        [start - outerLen + 0.1, endY, 0.21, 0.55, 0.9],
+      ];
+      for (const [y0, y1, hw, , z1] of sections) {
+        if (y0 - y1 < 0.05) continue;
+        const cs = [P(lineX - hw, y0), P(lineX + hw, y0), P(lineX - hw, y1), P(lineX + hw, y1)];
+        const x0 = Math.min(...cs.map((p) => p[0])), x1 = Math.max(...cs.map((p) => p[0]));
+        const gy0 = Math.min(...cs.map((p) => p[1])), gy1 = Math.max(...cs.map((p) => p[1]));
+        this.shadowBox(g, x0, gy0, x1, gy1, z1);
+      }
+      for (const [y0, y1, hw, z0, z1] of sections) {
+        if (y0 - y1 < 0.05) continue;
+        const cs = [P(lineX - hw, y0), P(lineX + hw, y0), P(lineX - hw, y1), P(lineX + hw, y1)];
+        const x0 = Math.min(...cs.map((p) => p[0])), x1 = Math.max(...cs.map((p) => p[0]));
+        const gy0 = Math.min(...cs.map((p) => p[1])), gy1 = Math.max(...cs.map((p) => p[1]));
+        this.tunnelBox(g, x0, gy0, x1, gy1, z0, z1);
+      }
+      // paint order inside the bridge: whichever end is nearer the camera goes last
+      const nearCab = cabAt[0] + cabAt[1] > rotAt[0] + rotAt[1];
+      st.c.setChildIndex(st.rot, nearCab ? 0 : 2);
+      st.c.setChildIndex(st.g, 1);
+      st.c.setChildIndex(st.cab, nearCab ? 2 : 0);
+      // in front of or behind the parked aircraft depending on which side faces the camera
+      const side = P(1, 0), o = P(0, 0);
+      const towardsCamera = side[0] - o[0] + side[1] - o[1] > 0;
+      const park = P(m.w / 2, m.h / 2);
+      st.c.zIndex = park[0] + park[1] + 1.5 + (towardsCamera ? 0.1 : -0.1);
+    }
+    for (const [id, st] of this.bridges) if (!live.has(id)) { st.c.destroy({ children: true }); this.bridges.delete(id); }
+  }
+
+  /** Soft ground shadow of a raised box, cast with the same sun as the Blender renders. */
+  private shadowBox(g: Graphics, x0: number, y0: number, x1: number, y1: number, z: number): void {
+    const sx = 0.24 * z, sy = -0.66 * z; // ground offset per tile of height
+    const pts = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].flatMap(([x, y]) => [isoX(x + sx, y + sy), isoY(x + sx, y + sy)]);
+    g.poly(pts).fill({ color: 0x1b2430, alpha: 0.18 });
+  }
+
+  /** Axis-aligned box drawn as its three camera-facing faces, lit like the sprites. */
+  private tunnelBox(g: Graphics, x0: number, y0: number, x1: number, y1: number, z0: number, z1: number): void {
+    const p = (x: number, y: number, z: number) => [isoX(x, y), isoY(x, y) - z * ZPX];
+    const face = (pts: number[][], color: number) => g.poly(pts.flat()).fill({ color });
+    // +y face (lit), +x face (shade), top
+    face([p(x0, y1, z0), p(x1, y1, z0), p(x1, y1, z1), p(x0, y1, z1)], 0xd3dbe5);
+    face([p(x1, y0, z0), p(x1, y1, z0), p(x1, y1, z1), p(x1, y0, z1)], 0x9ba7b5);
+    face([p(x0, y0, z1), p(x1, y0, z1), p(x1, y1, z1), p(x0, y1, z1)], 0xe9eef3);
+    // window strip and accent band on both visible sides
+    const band = (za: number, zb: number, cy: number, cx: number) => {
+      const i = 0.08;
+      if (x1 - x0 > 2 * i) face([p(x0 + i, y1, za), p(x1 - i, y1, za), p(x1 - i, y1, zb), p(x0 + i, y1, zb)], cy);
+      if (y1 - y0 > 2 * i) face([p(x1, y0 + i, za), p(x1, y1 - i, za), p(x1, y1 - i, zb), p(x1, y0 + i, zb)], cx);
+    };
+    const h = z1 - z0;
+    band(z0 + h * 0.38, z0 + h * 0.62, 0x334155, 0x273244);
+    band(z1 - h * 0.18, z1 - h * 0.1, 0x2f7de1, 0x2563c0);
   }
 
   private syncPax(s: GameState, dtReal: number): void {
@@ -525,10 +759,15 @@ export class Scene {
     }
     this.syncBuildings(s);
     this.syncAircraft(s);
-    this.syncService(s);
+    this.syncService(s, dtReal);
+    this.syncBridges(s, dtReal);
+    this.syncTraffic(s, dtReal);
     this.syncPax(s, dtReal);
     this.drawOverlay(s, ghost, hover, selected);
     this.placeLabels();
+    this.top.position.copyFrom(this.world.position);
+    this.top.scale.copyFrom(this.world.scale);
+    this.lights.update(s, groundStamp, this.app.screen.width, this.app.screen.height, this.traffic);
   }
 
   /** Thumbnail URL of a module's sprite for the build menu. */

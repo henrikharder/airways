@@ -796,34 +796,33 @@ def m_tree(b):
         o.rotation_euler = (0, 0, k * 0.4)
 
 
-def m_jetbridge(b):
-    steel = mat('#cbd5e1', 0.35)
-    glass = mat('#334155', 0.1)
-    # rotunda at the terminal end
-    b.cyl(0.18, 0.5, 0, 0.78, 0.22, mat('#94a3b8', 0.35), 20)
-    # telescoping tunnel: outer and inner sections with window strips and an accent band
-    for (x0, x1, w, z0, z1) in ((0.2, 1.65, 0.22, 0.42, 0.76), (1.55, 2.65, 0.19, 0.44, 0.74)):
-        b.box(x0, 0.5 - w, z0, x1, 0.5 + w, z1, steel, 0.02)
-        b.box(x0 + 0.05, 0.5 + w, z0 + 0.12, x1 - 0.05, 0.5 + w + 0.005, z0 + 0.22, glass)
-        b.box(x0 + 0.05, 0.5 - w - 0.005, z0 + 0.12, x1 - 0.05, 0.5 - w, z0 + 0.22, glass)
-        b.box(x0, 0.5 - w - 0.004, z1 - 0.06, x1, 0.5 + w + 0.004, z1 - 0.03, mat(C['accent'], 0.4))
-    # cab with rubber bellows hood
-    b.box(2.6, 0.24, 0.4, 3.0, 0.76, 0.78, mat('#94a3b8', 0.35), 0.02)
-    b.box(2.95, 0.22, 0.42, 3.1, 0.78, 0.8, mat('#1f2328', 0.7), 0.03)
-    # drive column with a two-wheel bogie
-    b.box(1.82, 0.42, 0.1, 1.9, 0.58, 0.44, mat('#475569', 0.35))
-    b.box(1.72, 0.34, 0.06, 2.0, 0.66, 0.12, mat('#475569', 0.35), 0.01)
-    for y in (0.36, 0.64):
-        b.wheel(1.86, y, 0.07, 0.07, 0.06, mat('#1f2328', 0.8))
-    # service stair from the cab
+def jb_cab(b):
+    """Jet bridge cab, centred on the origin, bellows hood facing +gx (towards the aircraft door)."""
+    b.box(-0.35, -0.27, 0.5, 0.25, 0.27, 0.92, mat('#94a3b8', 0.35), 0.02)
+    b.box(-0.33, -0.275, 0.68, 0.2, 0.275, 0.76, mat('#334155', 0.1))
+    b.box(0.22, -0.3, 0.48, 0.36, 0.3, 0.95, mat('#1f2328', 0.7), 0.04)  # rubber bellows
+    b.box(-0.35, -0.28, 0.86, 0.25, 0.28, 0.89, mat(C['accent'], 0.4))
+    # drive column with a two-wheel bogie under the cab
+    b.box(-0.2, -0.05, 0.08, -0.1, 0.05, 0.5, mat('#475569', 0.35))
+    b.box(-0.3, -0.2, 0.05, 0.0, 0.2, 0.11, mat('#475569', 0.35), 0.01)
+    for y in (-0.17, 0.17):
+        b.wheel(-0.15, y, 0.07, 0.07, 0.06, mat('#1f2328', 0.8))
+    # service stair down the side
     for k in range(5):
-        b.box(2.65 + k * 0.06, 0.78, 0.36 - k * 0.08, 2.75 + k * 0.06, 0.92, 0.38 - k * 0.08, mat('#94a3b8', 0.4))
+        b.box(-0.3 + k * 0.06, 0.27, 0.42 - k * 0.09, -0.2 + k * 0.06, 0.4, 0.44 - k * 0.09, mat('#94a3b8', 0.4))
+
+
+def jb_rotunda(b):
+    smooth(b.cyl(0, 0, 0, 0.95, 0.3, mat('#94a3b8', 0.35), 32))
+    smooth(b.cyl(0, 0, 0.6, 0.66, 0.31, mat('#334155', 0.1), 32))
+    smooth(b.cyl(0, 0, 0.95, 1.0, 0.33, mat('#475569', 0.4), 32))
+    smooth(b.cyl(0, 0, 0.88, 0.91, 0.315, mat(C['accent'], 0.4), 32))
 
 
 MODULES = {
     'checkin': (4, 2, m_checkin), 'security': (2, 4, m_security), 'gate': (4, 4, m_gate), 'food': (4, 4, m_food),
     'shop': (3, 3, m_shop), 'toilets': (2, 2, m_toilets), 'seats': (2, 1, m_seats), 'baggage': (3, 4, m_baggage),
-    'entrance': (2, 1, m_entrance), 'exit': (2, 1, m_exit), 'tower': (3, 3, m_tower), 'tree': (1, 1, m_tree), 'jetbridge': (3, 1, m_jetbridge),
+    'entrance': (2, 1, m_entrance), 'exit': (2, 1, m_exit), 'tower': (3, 3, m_tower), 'tree': (1, 1, m_tree)
 }
 
 # ---------------------------------------------------------------- aircraft (real dimensions, metres)
@@ -1226,6 +1225,47 @@ def gse_cone(b):
 
 GSE = {'tug': gse_tug, 'bags': gse_bags, 'belt': gse_belt, 'fuel': gse_fuel, 'catering': gse_catering}
 
+
+
+# ---------------------------------------------------------------- landside traffic
+
+
+def road_car(b, body='#f1f5f9', taxi=False):
+    """Hatchback facing +gx, centred. Built in near-white so the game can tint it any colour."""
+    paint = mat(body, 0.35)
+    b.box(-0.46, -0.18, 0.05, 0.46, 0.18, 0.17, paint, 0.03)
+    b.box(-0.3, -0.16, 0.17, 0.2, 0.16, 0.28, mat('#1e293b', 0.1), 0.03)  # glasshouse
+    b.box(-0.28, -0.165, 0.27, 0.16, 0.165, 0.295, paint, 0.02)  # roof
+    b.box(0.455, -0.15, 0.11, 0.47, -0.08, 0.14, mat('#fff7d6', 0.2, 4.0))  # headlights
+    b.box(0.455, 0.08, 0.11, 0.47, 0.15, 0.14, mat('#fff7d6', 0.2, 4.0))
+    b.box(-0.47, -0.15, 0.11, -0.455, -0.09, 0.14, mat('#ef4444', 0.3, 3.0))  # tail lights
+    b.box(-0.47, 0.09, 0.11, -0.455, 0.15, 0.14, mat('#ef4444', 0.3, 3.0))
+    for x in (-0.28, 0.28):
+        for y in (-0.17, 0.17):
+            b.wheel(x, y, 0.06, 0.06, 0.05, mat('#1f2328', 0.8))
+    if taxi:
+        b.box(-0.08, -0.06, 0.295, 0.04, 0.06, 0.34, mat('#fef9c3', 0.3, 1.5))
+
+
+def road_bus(b):
+    white = mat('#f1f5f9', 0.35)
+    b.box(-1.2, -0.25, 0.06, 1.2, 0.25, 0.62, white, 0.04)
+    b.box(-1.15, -0.255, 0.33, 1.1, 0.255, 0.5, mat('#1e293b', 0.1))  # window band
+    b.box(1.19, -0.22, 0.2, 1.205, 0.22, 0.55, mat('#1e293b', 0.1))  # windscreen
+    b.box(-1.205, -0.255, 0.12, 1.205, 0.255, 0.2, mat(C['accent'], 0.4))
+    b.box(-1.15, -0.2, 0.62, 0.9, 0.2, 0.66, mat('#cbd5e1', 0.4))  # roof pods
+    b.box(1.2, -0.2, 0.1, 1.215, -0.12, 0.15, mat('#fff7d6', 0.2, 4.0))
+    b.box(1.2, 0.12, 0.1, 1.215, 0.2, 0.15, mat('#fff7d6', 0.2, 4.0))
+    b.box(-1.215, -0.2, 0.1, -1.2, -0.12, 0.16, mat('#ef4444', 0.3, 3.0))
+    b.box(-1.215, 0.12, 0.1, -1.2, 0.2, 0.16, mat('#ef4444', 0.3, 3.0))
+    for x in (-0.75, 0.8):
+        for y in (-0.24, 0.24):
+            b.wheel(x, y, 0.09, 0.09, 0.07, mat('#1f2328', 0.8))
+
+
+ROAD = {'car': road_car, 'taxi': lambda b: road_car(b, '#facc15', taxi=True), 'bus': road_bus}
+
+
 # ---------------------------------------------------------------- passengers
 
 SHIRTS = ['#ef4444', '#3b82f6', '#22c55e', '#f59e0b', '#a855f7', '#14b8a6']
@@ -1337,6 +1377,25 @@ def main():
             b = Builder(1, 1, 0)
             fn(b)
             render(key, b.turn(f))
+    for f in range(4):
+        if want(f'jbcab_{f}'):
+            clear_objects()
+            b = Builder(1, 1, 0)
+            jb_cab(b)
+            render(f'jbcab_{f}', b.turn(f))
+    if want('jbrot'):
+        clear_objects()
+        b = Builder(1, 1, 0)
+        jb_rotunda(b)
+        render('jbrot', b.objs)
+    for name, fn in ROAD.items():
+        for f in range(4):
+            key = f'{name}_{f}'
+            if want(key):
+                clear_objects()
+                b = Builder(1, 1, 0)
+                fn(b)
+                render(key, b.turn(f))
     if want('gse_cone'):
         clear_objects()
         b = Builder(1, 1, 0)
