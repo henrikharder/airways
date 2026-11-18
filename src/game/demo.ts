@@ -3,6 +3,7 @@
 import { acceptOffer } from './flights';
 import { invalidate, paintRect, place } from './grid';
 import { createGame } from './newgame';
+import { staffToNeed } from './staff';
 import type { GameState } from './types';
 
 export function buildDemo(s: GameState): string[] {
@@ -32,6 +33,7 @@ export function buildDemo(s: GameState): string[] {
   ok(place(s, 'baggage', 32, 68, 0), 'baggage');
   for (const x of [58, 60]) ok(place(s, 'seats', x, 66, 0), 'seats');
   ok(place(s, 'carpark', 80, 81, 0), 'car park');
+  ok(place(s, 'bagsort', 75, 36, 0), 'baggage hall');
   const sk = ++s.nextId;
   const fr = ++s.nextId;
   s.offers.push(
@@ -40,6 +42,7 @@ export function buildDemo(s: GameState): string[] {
   );
   acceptOffer(s, sk);
   acceptOffer(s, fr);
+  staffToNeed(s);
   return errors;
 }
 

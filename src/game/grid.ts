@@ -1,6 +1,7 @@
 // Tile grid, footprints and the rules for building.
 
 import { BULLDOZE_REFUND, MODULES, PAINTS } from './catalog';
+import { planningMultiplier } from './night';
 import type { Building, GameState, ModuleKind, PaintKind } from './types';
 import { T } from './types';
 
@@ -95,7 +96,10 @@ export function runwayLine(b: Building): { start: [number, number]; end: [number
 export interface Check { ok: boolean; reason?: string; cost: number }
 
 export function checkPlace(s: GameState, kind: ModuleKind, x: number, y: number, rot: number): Check {
-  const spec = MODULES[kind];
+  const base = MODULES[kind];
+  // airside expansion needs planning permission, which gets pricey when the neighbours are unhappy
+  const airside = base.category === 'airside';
+  const spec = airside ? { ...base, cost: Math.round(base.cost * planningMultiplier(s)) } : base;
   const { w, h } = footprint(kind, rot);
   const L = getLayout(s);
   if (s.cash < spec.cost) return { ok: false, reason: 'Not enough cash', cost: spec.cost };
@@ -108,7 +112,7 @@ export function checkPlace(s: GameState, kind: ModuleKind, x: number, y: number,
       if (spec.indoor && t !== T.Floor && !(kind === 'exit' && t === T.Barrier)) return { ok: false, reason: 'Must be inside the terminal (paint terminal floor first)', cost: spec.cost };
       if (!spec.indoor) {
         if (t === T.Floor || t === T.Road || t === T.Runway) return { ok: false, reason: 'Needs open ground', cost: spec.cost };
-        if ((kind === 'tower' || kind === 'carpark' || kind === 'tree') && t !== T.Grass) return { ok: false, reason: 'Needs grass', cost: spec.cost };
+        if ((kind === 'tower' || kind === 'carpark' || kind === 'tree' || kind === 'bagsort') && t !== T.Grass) return { ok: false, reason: 'Needs grass', cost: spec.cost };
       }
     }
   }
@@ -129,6 +133,14 @@ export function checkPlace(s: GameState, kind: ModuleKind, x: number, y: number,
     let road = false;
     for (let ty = y - 1; ty <= y + h && !road; ty++) for (let tx = x - 1; tx <= x + w; tx++) if (tileAt(s, tx, ty) === T.Road) road = true;
     if (!road) return { ok: false, reason: 'Must touch the road', cost: spec.cost };
+  }
+  if (kind === 'bagsort') {
+    let apron = false;
+    for (let ty = y - 1; ty <= y + h && !apron; ty++) for (let tx = x - 1; tx <= x + w; tx++) {
+      const t = tileAt(s, tx, ty);
+      if (t === T.Apron || t === T.Taxiway) apron = true;
+    }
+    if (!apron) return { ok: false, reason: 'Must touch apron or taxiway (for the baggage trains)', cost: spec.cost };
   }
   if (kind === 'runway' && s.buildings.some((b) => b.kind === 'runway')) return { ok: false, reason: 'One runway is enough for now', cost: spec.cost };
   return { ok: true, cost: spec.cost };

@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { demoGame } from './demo';
-import { held } from './flights';
+import { acceptOffer, held } from './flights';
 import { accessTile, bulldozeAt, checkPlace, paintRect, place, walkable } from './grid';
 import { createGame } from './newgame';
 import { aircraftPath, distanceTo, UNREACHABLE } from './paths';
 import { securityReport } from './security';
 import { advance } from './sim';
+import { inNight, setCurfew } from './night';
+import { needed, openServers } from './staff';
+import { serviceStats } from './passengers';
+import type { Flight } from './types';
 
 describe('building rules', () => {
   it('only allows indoor modules on terminal floor with a free front', () => {
@@ -45,7 +49,7 @@ describe('airport simulation', () => {
     expect(s.buildings.filter((b) => b.kind === 'stand_m').every((b) => b.link)).toBe(true);
     let peak = 0, lost = 0;
     const leaving = new Set<number>(); // arriving passengers heading out after baggage claim
-    const done = new Map<number, { boarded: number; missed: number }>();
+    const done = new Map<number, Flight>();
     for (let i = 0; i < 48 * 60; i += 10) {
       advance(s, 10);
       peak = Math.max(peak, s.pax.length);
@@ -57,7 +61,9 @@ describe('airport simulation', () => {
     const boarded = [...done.values()].reduce((n, f) => n + f.boarded, 0);
     const missed = [...done.values()].reduce((n, f) => n + f.missed, 0);
     expect(s.flights.filter((f) => f.phase === 'cancelled')).toHaveLength(0);
-    console.log({ departures, boarded, missed, peak, lost, leaving: leaving.size, cash: Math.round(s.cash), rating: s.rating.toFixed(1) });
+    const bagsLeft = [...done.values()].reduce((n, f) => n + f.bagsLeft, 0);
+    const late = [...done.values()].filter((f) => f.delayed > 15).length;
+    console.log({ departures, boarded, missed, peak, lost, leaving: leaving.size, bagsLeft, late, cash: Math.round(s.cash), rating: s.rating.toFixed(1) });
     expect(departures).toBeGreaterThanOrEqual(7);
     expect(boarded).toBeGreaterThan(missed * 4);
     expect(lost).toBe(0);
@@ -87,5 +93,72 @@ describe('security', () => {
     expect(distanceTo(s, entrance, gx + 0.5, gy + 0.5, true)).toBeLessThan(UNREACHABLE);
     expect(walkable(s, exit.x, exit.y, false)).toBe(false);
     expect(walkable(s, exit.x, exit.y, true)).toBe(true);
+  });
+});
+
+describe('baggage', () => {
+  it('holds departures for bags, and leaves bags behind when the system cannot keep up', () => {
+    const run = (setup: (s: ReturnType<typeof demoGame>) => void) => {
+      const s = demoGame();
+      setup(s);
+      const done = new Map<number, Flight>();
+      for (let i = 0; i < 30 * 60; i += 10) {
+        advance(s, 10);
+        for (const f of s.flights) if (f.phase === 'departed') done.set(f.id, f);
+      }
+      const fs = [...done.values()];
+      return { left: fs.reduce((n, f) => n + f.bagsLeft, 0), late: fs.filter((f) => f.delayed > 10).length, flights: fs };
+    };
+    const good = run(() => {});
+    const bad = run((s) => {
+      const hall = s.buildings.find((b) => b.kind === 'bagsort')!;
+      bulldozeAt(s, hall.x, hall.y);
+      s.staff.ground = 0;
+    });
+    expect(good.left).toBe(0);
+    expect(bad.left + bad.late).toBeGreaterThan(good.left + good.late);
+    // not everyone checks a bag, and arriving bags all reach the carousel
+    for (const f of good.flights) {
+      expect(f.bagsChecked).toBeLessThan(f.boarded * 2 + 1);
+      expect(f.bagsIn).toBeLessThan(f.paxIn * 1.5);
+    }
+  });
+});
+
+describe('staff', () => {
+  it('only opens desks that have staff on shift', () => {
+    const s = demoGame();
+    const desks = s.buildings.filter((b) => b.kind === 'checkin');
+    expect(openServers(s).get(desks[0].id)).toBe(4);
+    const served = () => desks.reduce((n, b) => n + serviceStats(b.id, s.minute).perHour, 0);
+    s.staff.checkin = 0;
+    let queued = false;
+    for (let m = 0; m < 24 * 60 && !queued; m += 10) { advance(s, 10); queued ||= s.pax.some((p) => p.state === 'queue' && p.stage === 'checkin'); }
+    advance(s, 20);
+    expect(queued).toBe(true);
+    expect(served()).toBe(0);
+    s.staff.checkin = needed(s).checkin;
+    while (s.pax.every((p) => p.state !== 'queue' || p.stage !== 'checkin')) advance(s, 10);
+    advance(s, 30);
+    expect(served()).toBeGreaterThan(0);
+  });
+});
+
+describe('night operations', () => {
+  it('a curfew ends night contracts and blocks new ones; night flights cost goodwill', () => {
+    const s = demoGame();
+    s.offers.push({ id: ++s.nextId, airline: 'FR', dest: 'STN', typeId: 'B38M', perDay: 1, load: 0.85, expires: 9, minRating: 0, night: true });
+    expect(acceptOffer(s, s.nextId)).toBeNull();
+    const night = s.flights.filter((f) => f.night);
+    expect(night.length).toBeGreaterThan(0);
+    for (const f of night) expect(inNight(f.dep)).toBe(true);
+    const before = s.goodwill;
+    advance(s, 26 * 60);
+    expect(s.history.length + s.today.departures).toBeGreaterThan(0);
+    expect(s.goodwill).toBeLessThan(before + 2); // night noise outweighed a day of recovery
+    setCurfew(s, '23-06');
+    expect(s.contracts.some((c) => c.night)).toBe(false);
+    s.offers.push({ id: ++s.nextId, airline: 'FR', dest: 'STN', typeId: 'B38M', perDay: 1, load: 0.85, expires: 9, minRating: 0, night: true });
+    expect(acceptOffer(s, s.nextId)).not.toBeNull();
   });
 });

@@ -819,10 +819,52 @@ def jb_rotunda(b):
     smooth(b.cyl(0, 0, 0.88, 0.91, 0.315, mat(C['accent'], 0.4), 32))
 
 
+def m_bagsort(b):
+    """Baggage hall (6×4): clad shed, roller doors on the apron side (+gy), conveyor bridge to the terminal."""
+    clad = mat('#d6dbe2', 0.55)
+    b.box(0.2, 0.2, 0, 5.8, 3.2, 1.05, clad, 0.03)
+    for k in range(12):  # vertical cladding ribs
+        x = 0.35 + k * 0.45
+        b.box(x, 3.2, 0.05, x + 0.04, 3.215, 1.0, mat('#b8c0cb', 0.5))
+    b.box(0.15, 0.15, 1.05, 5.85, 3.25, 1.12, mat('#4b5563', 0.5), 0.02)  # roof edge
+    for k in range(4):  # skylight strips
+        b.box(0.6 + k * 1.3, 0.6, 1.12, 1.4 + k * 1.3, 2.8, 1.16, mat('#9fd3f5', 0.1))
+    b.box(4.6, 0.6, 1.12, 5.4, 1.2, 1.4, mat('#94a3b8', 0.4), 0.02)  # air handling unit
+    # roller doors with lit sorting interior behind them
+    for k in range(3):
+        x0 = 0.55 + k * 1.75
+        b.box(x0, 3.19, 0, x0 + 1.25, 3.23, 0.7, mat('#1f2328', 0.6))
+        b.box(x0 + 0.05, 3.2, 0.05, x0 + 1.2, 3.235, 0.4, mat('#fde68a', 0.4, 1.4))
+        b.box(x0 + 0.05, 3.2, 0.4, x0 + 1.2, 3.24, 0.66, mat('#cbd5e1', 0.45))  # half-raised door
+        for j in range(4):
+            b.box(x0 + 0.05, 3.24, 0.43 + j * 0.06, x0 + 1.2, 3.245, 0.445 + j * 0.06, mat('#94a3b8', 0.4))
+        b.box(x0 - 0.05, 3.19, 0.7, x0 + 1.3, 3.26, 0.76, mat(GSE_YELLOW, 0.4))
+    # sign band
+    b.box(1.6, 3.2, 0.8, 4.4, 3.26, 0.98, mat('#ffcc00', 0.4))
+    b.box(1.75, 3.26, 0.84, 2.0, 3.265, 0.94, mat('#111111'))
+    for k in range(6):
+        b.box(2.15 + k * 0.33, 3.26, 0.86, 2.4 + k * 0.33, 3.265, 0.92, mat('#111111'))
+    # covered conveyor bridge heading back towards the terminal (-gy)
+    b.box(2.6, 0.0, 0.55, 3.4, 0.2, 0.95, mat('#9aa5b5', 0.4))
+    b.box(2.7, -0.0, 0.62, 3.3, 0.02, 0.88, mat('#334155', 0.2))
+    # baggage carts and a tractor waiting on the forecourt
+    cols = ['#be123c', '#0ea5e9', '#334155', '#f59e0b', '#16a34a']
+    for k in range(3):
+        x0 = 0.4 + k * 0.7
+        b.box(x0, 3.45, 0.05, x0 + 0.55, 3.8, 0.08, mat('#9aa5b5', 0.4))
+        b.box(x0 - 0.01, 3.44, 0.32, x0 + 0.56, 3.81, 0.34, mat('#cbd5e1', 0.5))
+        for j in range(3):
+            b.box(x0 + 0.04 + j * 0.16, 3.5, 0.08, x0 + 0.16 + j * 0.16, 3.75, 0.18, mat(cols[(k + j) % 5], 0.5), 0.01)
+        for x in (x0 + 0.08, x0 + 0.47):
+            b.wheel(x, 3.63, 0.045, 0.045, 0.3, mat('#1f2328', 0.8), axis='x', verts=10)
+    b.box(4.4, 3.45, 0.06, 4.95, 3.8, 0.2, mat('#e11d48', 0.5), 0.02)
+    b.box(4.45, 3.47, 0.2, 4.68, 3.78, 0.38, mat('#1e293b', 0.1))
+
+
 MODULES = {
     'checkin': (4, 2, m_checkin), 'security': (2, 4, m_security), 'gate': (4, 4, m_gate), 'food': (4, 4, m_food),
     'shop': (3, 3, m_shop), 'toilets': (2, 2, m_toilets), 'seats': (2, 1, m_seats), 'baggage': (3, 4, m_baggage),
-    'entrance': (2, 1, m_entrance), 'exit': (2, 1, m_exit), 'tower': (3, 3, m_tower), 'tree': (1, 1, m_tree)
+    'entrance': (2, 1, m_entrance), 'bagsort': (6, 4, m_bagsort), 'exit': (2, 1, m_exit), 'tower': (3, 3, m_tower), 'tree': (1, 1, m_tree)
 }
 
 # ---------------------------------------------------------------- aircraft (real dimensions, metres)

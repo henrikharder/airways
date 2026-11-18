@@ -1,6 +1,9 @@
 // Main simulation step: time, flights, passengers, money and the daily cycle.
 
-import { FEES, MODULES } from './catalog';
+import { FEES, MODULES, NIGHT } from './catalog';
+import { updateBaggage } from './baggage';
+import { inNight, nightDaily, nightMovement } from './night';
+import { wagesPerDay } from './staff';
 import { weeklyMeeting } from './board';
 import { airlineName, allocateStands, generateOffers, landingFee, scheduleContract, updateFlight } from './flights';
 import { addNews } from './news';
@@ -46,20 +49,26 @@ function step(s: GameState, dt: number): void {
   const up = (upkeepPerDay(s) * dt) / DAY;
   s.cash -= up;
   book(s, 'upkeep', up);
+  const wages = (wagesPerDay(s) * dt) / DAY;
+  s.cash -= wages;
+  book(s, 'wages', wages);
 
   const flights = new Map(s.flights.map((f) => [f.id, f]));
   for (const f of s.flights) {
     spawnPax(s, f, dt);
-    updateFlight(s, f, dt, (x) => departed(s, x), () => {});
+    updateFlight(s, f, dt, (x) => departed(s, x), (x) => { if (inNight(s.minute)) nightMovement(s, x); });
   }
   updatePax(s, dt, flights, (p) => paxDone(s, p));
+  updateBaggage(s, dt);
 
   // forget old flights
   if (Math.random() < 0.01) s.flights = s.flights.filter((f) => !((f.phase === 'departed' || f.phase === 'cancelled') && f.dep < s.minute - 6 * 60));
 }
 
 function departed(s: GameState, f: Flight): void {
-  const fee = landingFee(f.typeId);
+  const night = inNight(s.minute);
+  if (night) nightMovement(s, f);
+  const fee = landingFee(f.typeId) * (night || f.night ? NIGHT.premium : 1);
   const pf = f.boarded * FEES.perDepartingPax;
   s.cash += fee + pf;
   book(s, 'landing', fee);
@@ -69,8 +78,9 @@ function departed(s: GameState, f: Flight): void {
   const c = s.contracts.find((x) => x.id === f.contract);
   if (c) {
     const missRate = f.paxOut ? f.missed / f.paxOut : 0;
-    c.happiness = Math.max(0, Math.min(100, c.happiness + (f.delayed > 15 ? -4 : 1.5) - missRate * 20));
+    c.happiness = Math.max(0, Math.min(100, c.happiness + (f.delayed > 15 ? -4 : 1.5) - missRate * 20 - Math.min(8, f.bagsLeft / 10)));
   }
+  if (f.bagsLeft > 0) addNews(s, `${f.number} left without ${f.bagsLeft} bag${f.bagsLeft > 1 ? 's' : ''}: the baggage system could not keep up.`, 'bad');
   if (f.delayed > 30) addNews(s, `${f.number} left ${f.delayed} minutes late. ${airlineName(f.airline)} is not amused.`, 'bad');
 }
 
@@ -100,6 +110,7 @@ function newDay(s: GameState, day: number): void {
       ? 'Aviation authority fine: passengers can reach the gates without going through security. Wall off the airside with barriers.'
       : 'Aviation authority fine: arriving passengers have no way out. Add an arrivals exit in the security barrier.', 'bad');
   }
+  nightDaily(s);
   for (const c of s.contracts) scheduleContract(s, c, day);
   s.scheduledDay = day;
   allocateStands(s);

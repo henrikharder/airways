@@ -1,16 +1,20 @@
 import { acType } from '../data/aircraft';
 import { AIRPORTS, airport } from '../data/airports';
 import { progress, weekLabel } from '../game/board';
-import { MODULES, PAINTS, standClassFor, standFits, type Category } from '../game/catalog';
+import { BAGS, MODULES, NIGHT, PAINTS, ROLES, standClassFor, standFits, type Category } from '../game/catalog';
+import { bagsPending, halls, sortRate } from '../game/baggage';
+import { CURFEWS, planningMultiplier, setCurfew } from '../game/night';
+import { coverage, needed, openServers, positions, shifts, staffToNeed, wagesPerDay } from '../game/staff';
 import { acceptOffer, airlineColor, airlineName, declineOffer, gateOf, reachableStands, runway, hasTower } from '../game/flights';
 import { accessTile, bulldozeAt, checkPlace, footprint, getLayout, idx, layoutStamp, paintCheck, paintRect, place, walkable } from '../game/grid';
 import { buildDemo } from '../game/demo';
+import { buildExpanded } from '../game/expanded';
 import { createGame } from '../game/newgame';
 import { distanceTo, UNREACHABLE } from '../game/paths';
 import { serviceStats, usersOf } from '../game/passengers';
 import { hasSave, loadGame, saveGame } from '../game/save';
 import { advance, upkeepPerDay } from '../game/sim';
-import type { Building, GameState, ModuleKind, PaintKind } from '../game/types';
+import type { Building, Curfew, GameState, ModuleKind, PaintKind, Role } from '../game/types';
 import { income, profit } from '../game/types';
 import { laneExit, securityReport } from '../game/security';
 import { Scene, type Badge, type Ghost } from '../render/scene';
@@ -19,13 +23,13 @@ import { clock, esc, money, num } from './format';
 import { icon, logoMark, type IconName } from './icons';
 
 type Tool = { t: 'select' } | { t: 'build'; kind: ModuleKind } | { t: 'paint'; paint: PaintKind } | { t: 'bulldoze' };
-type Tab = 'airport' | 'airlines' | 'flights' | 'money';
+type Tab = 'airport' | 'airlines' | 'flights' | 'ops' | 'money';
 
 const SPEEDS = [0, 1, 3, 8, 20]; // game minutes per real second
 const SPEED_LABEL = ['', '1×', '2×', '3×', '4×'];
 
 const PALETTE: { cat: Category | 'tools'; label: string; items: ({ build: ModuleKind } | { paint: PaintKind })[] }[] = [
-  { cat: 'airside', label: 'Airside', items: [{ build: 'runway' }, { build: 'tower' }, { paint: 'taxiway' }, { paint: 'apron' }, { build: 'stand_s' }, { build: 'stand_m' }, { build: 'stand_l' }, { build: 'stand_xl' }] },
+  { cat: 'airside', label: 'Airside', items: [{ build: 'runway' }, { build: 'tower' }, { paint: 'taxiway' }, { paint: 'apron' }, { build: 'stand_s' }, { build: 'stand_m' }, { build: 'stand_l' }, { build: 'stand_xl' }, { build: 'bagsort' }] },
   { cat: 'terminal', label: 'Terminal', items: [{ paint: 'floor' }, { build: 'entrance' }, { build: 'checkin' }, { build: 'security' }, { paint: 'barrier' }, { build: 'exit' }, { build: 'gate' }, { build: 'baggage' }] },
   { cat: 'comfort', label: 'Comforts', items: [{ build: 'food' }, { build: 'shop' }, { build: 'toilets' }, { build: 'seats' }] },
   { cat: 'landside', label: 'Landside', items: [{ build: 'carpark' }, { build: 'tree' }] },
@@ -34,7 +38,7 @@ const PALETTE: { cat: Category | 'tools'; label: string; items: ({ build: Module
 const ITEM_ICON: Partial<Record<ModuleKind | PaintKind, IconName>> = {
   runway: 'runway', tower: 'tower', taxiway: 'taxiway', apron: 'floor', stand_s: 'stand', stand_m: 'stand', stand_l: 'stand', stand_xl: 'stand',
   floor: 'terminal', entrance: 'entrance', checkin: 'checkin', security: 'security', gate: 'gate', baggage: 'baggage', food: 'food', shop: 'shop',
-  toilets: 'toilets', seats: 'seats', carpark: 'car', tree: 'tree', barrier: 'barrier', exit: 'exit',
+  toilets: 'toilets', seats: 'seats', carpark: 'car', tree: 'tree', bagsort: 'baggage', barrier: 'barrier', exit: 'exit',
 };
 
 export class Game {
@@ -91,6 +95,46 @@ export class Game {
     const errors = buildDemo(this.s);
     this.scene.centerOn(52, 50);
     return errors;
+  }
+
+  // Dev helpers for playtesting from the console (window.airways in dev builds).
+  // They use this module graph, so they keep working across hot reloads.
+
+  /** Start a fresh game with the demo airport, skipping the start screen. */
+  newDemo(): string[] {
+    this.start(createGame({ name: 'Copenhagen North', code: 'CPN', city: 'CPH' }));
+    return this.demo();
+  }
+
+  /** Start the large playtest airport (see game/expanded.ts). */
+  newExpanded(): string[] {
+    const s = createGame({ name: 'Copenhagen North', code: 'CPN', city: 'CPH' });
+    const errors = buildExpanded(s);
+    this.start(s);
+    this.scene.zoom = 0.8;
+    this.scene.centerOn(56, 48);
+    return errors;
+  }
+
+  /** Run the simulation forward by game minutes, then refresh the panels. */
+  play(minutes: number): void {
+    advance(this.s, minutes);
+    this.renderChrome();
+    this.renderPanel();
+  }
+
+  /** Point the camera at a grid position and draw a frame now. */
+  look(x: number, y: number, zoom = this.scene.zoom): void {
+    this.scene.zoom = zoom;
+    this.scene.centerOn(x, y);
+    this.scene.render(this.s, layoutStamp(), 0, null, null, null);
+    this.scene.app.render(); // present now, even if the page isn't animating
+    this.renderTopbar();
+  }
+
+  /** Let the visual-only life (vehicles, traffic, bridges) animate for some real seconds. */
+  tick(seconds = 1): void {
+    for (let t = 0; t < seconds; t += 0.25) this.scene.render(this.s, layoutStamp(), 0.25, null, null, null);
   }
 
   private start(s: GameState): void {
@@ -316,6 +360,13 @@ export class Game {
       case 'tab': this.tab = d.tab as Tab; this.selected = null; return this.renderPanel();
       case 'accept': { const err = acceptOffer(this.s, Number(d.id)); if (err) this.toast(err, 'err'); else this.toast('Contract signed'); return this.renderPanel(); }
       case 'decline': declineOffer(this.s, Number(d.id)); return this.renderPanel();
+      case 'hire': {
+        const r = d.role as Role;
+        this.s.staff[r] = Math.max(0, this.s.staff[r] + Number(d.n));
+        return this.renderPanel();
+      }
+      case 'staff-match': staffToNeed(this.s); this.toast('Staff matched to the airport'); return this.renderPanel();
+      case 'curfew': setCurfew(this.s, d.c as Curfew); return this.renderPanel();
       case 'deselect': this.selected = null; return this.renderPanel();
       case 'demolish': {
         if (!this.selected) return;
@@ -427,6 +478,17 @@ export class Game {
     if (sec.breach) w.push('Security breach: gates can be reached without screening. Wall off the airside with barriers (fined daily).');
     if (sec.badLanes) w.push(`${sec.badLanes} security lane${sec.badLanes > 1 ? 's open' : ' opens'} back into the landside or onto a blocked tile.`);
     if (sec.trapped) w.push('Arriving passengers cannot get out: add an arrivals exit in the barrier (fined daily).');
+    // staff
+    const pos = positions(s);
+    const open = openServers(s);
+    const openOf = (k: ModuleKind) => s.buildings.filter((b) => b.kind === k).reduce((n, b) => n + (open.get(b.id) ?? 0), 0);
+    if (pos.checkin && openOf('checkin') < pos.checkin) w.push(`Only ${openOf('checkin')} of ${pos.checkin} check-in desks staffed. Hire check-in agents (Ops tab).`);
+    if (pos.security && openOf('security') < pos.security) w.push(`Only ${openOf('security') / 2} of ${pos.security / 2} security lanes staffed. Hire officers (Ops tab).`);
+    if (pos.ground && coverage(s, 'ground') < 0.75) w.push(`Ground crew at ${Math.round(coverage(s, 'ground') * 100)}%: bags and turnarounds will run slow.`);
+    // baggage
+    const waiting = s.flights.filter((f) => f.phase === 'parked' && s.minute > f.dep && (bagsPending(f).load > 0.5 || bagsPending(f).unload > 0.5)).length;
+    if (waiting) w.push(`${waiting} aircraft held for baggage. ${halls(s).length ? 'Add a baggage hall or ground crew.' : 'Build a baggage hall next to the apron.'}`);
+    if (s.goodwill < 35) w.push(`Neighbours are angry about night noise (goodwill ${Math.round(s.goodwill)}). Airside permits cost ×${planningMultiplier(s).toFixed(1)}.`);
     const types = new Set(s.contracts.map((c) => c.typeId));
     for (const tId of types) if (!stands.some((b) => standFits(b.kind, tId))) w.push(`No stand big enough for the ${acType(tId).name} (needs ${standClassFor(tId).toUpperCase()}).`);
     return w;
@@ -444,7 +506,7 @@ export class Game {
 
   private renderPanel(): void {
     if (!this.s) return;
-    const tabs: [Tab, string][] = [['airport', 'Airport'], ['airlines', 'Airlines'], ['flights', 'Flights'], ['money', 'Money']];
+    const tabs: [Tab, string][] = [['airport', 'Airport'], ['airlines', 'Airlines'], ['flights', 'Flights'], ['ops', 'Ops'], ['money', 'Money']];
     this.$('#tabs').innerHTML = tabs.map(([k, l]) => `<button class="${!this.selected && this.tab === k ? 'on' : ''}" data-act="tab" data-tab="${k}">${l}${k === 'airlines' && this.s.offers.length ? `<span class="badge-n">${this.s.offers.length}</span>` : ''}</button>`).join('');
     const view = this.$('#view');
     const scroll = view.scrollTop;
@@ -454,6 +516,7 @@ export class Game {
     else if (this.tab === 'airport') html = this.airportView();
     else if (this.tab === 'airlines') html = this.airlinesView();
     else if (this.tab === 'flights') html = this.flightsView();
+    else if (this.tab === 'ops') html = this.opsView();
     else html = this.moneyView();
     if (wasBoard && this.tab === 'flights' && !this.selected) {
       // keep the split-flap board alive so it can animate; refresh the rest
@@ -479,6 +542,7 @@ export class Game {
       [has('runway'), 'Build a runway', 'Airside → Runway. It is long: place it across the top of the site. Press R to rotate.'],
       [has('tower'), 'Build a control tower', 'Airside → Control tower, on grass anywhere.'],
       [has('entrance') && has('checkin') && has('security') && has('gate'), 'Build a terminal', 'Paint Terminal floor near the road, then add an Entrance on its road side, Check-in, a Security lane and a Gate near the airside edge.'],
+      [has('checkin') && coverage(s, 'checkin') >= 1 && coverage(s, 'security') >= 1, 'Hire staff', 'Open the Ops tab and press “Match needs”. Desks and lanes only open with staff on shift.'],
       [s.buildings.some((b) => b.kind.startsWith('stand_') && b.link) && reachableStands(s).size > 0, 'Add a stand and taxiway', 'Place a stand next to the gate (the yellow square shows where aircraft enter) and paint taxiways linking it to the runway.'],
       [s.contracts.length > 0, 'Sign an airline', 'Open the Airlines tab and accept an offer your stands can handle.'],
     ];
@@ -513,9 +577,10 @@ export class Game {
       const locked = s.rating < o.minRating;
       return `<div class="offer">
         <div class="offer-h"><span class="chip" style="--c:${airlineColor(o.airline)}">${o.airline}</span><b>${esc(airlineName(o.airline))}</b><span class="muted small">expires day ${o.expires + 1}</span></div>
-        <div class="offer-b">${icon('plane')} ${o.perDay}× daily to <b>${esc(airport(o.dest).city)}</b> (${o.dest}) · ${esc(acType(o.typeId).name)} · needs stand ${standClassFor(o.typeId).toUpperCase()}</div>
+        <div class="offer-b">${o.night ? '<span class="tag night">Night</span> ' : ''}${icon('plane')} ${o.night ? 'A nightly red-eye' : `${o.perDay}× daily`} to <b>${esc(airport(o.dest).city)}</b> (${o.dest}) · ${esc(acType(o.typeId).name)} · needs stand ${standClassFor(o.typeId).toUpperCase()}</div>
+        ${o.night ? `<div class="offer-b small muted">Leaves between 22:30 and 05:00. Landing fees ×${NIGHT.premium}, but night noise costs goodwill and needs round-the-clock staff.</div>` : ''}
         <div class="offer-b muted small">~${num(o.perDay * 2 * Math.round(acType(o.typeId).maxSeats * 0.85 * o.load))} passengers a day${locked ? ` · requires rating ${o.minRating}` : ''}${fits ? '' : ' · you have no stand this size yet'}</div>
-        <div class="actions"><button class="btn primary sm" data-act="accept" data-id="${o.id}" ${locked ? 'disabled' : ''}>Accept</button><button class="btn sm" data-act="decline" data-id="${o.id}">Decline</button></div>
+        <div class="actions"><button class="btn primary sm" data-act="accept" data-id="${o.id}" ${locked || (o.night && s.curfew !== 'none') ? 'disabled' : ''}>Accept</button><button class="btn sm" data-act="decline" data-id="${o.id}">Decline</button></div>
       </div>`;
     }).join('');
     const contracts = s.contracts.map((c) => `<tr><td><span class="chip" style="--c:${airlineColor(c.airline)}">${c.airline}</span> ${esc(airport(c.dest).city)}</td><td class="small">${esc(acType(c.typeId).name)}</td><td class="r">${c.perDay}×</td><td class="r"><span class="${c.happiness < 35 ? 'neg' : c.happiness < 60 ? 'warn' : 'pos'}">${Math.round(c.happiness)}%</span></td></tr>`).join('');
@@ -533,15 +598,56 @@ export class Game {
       ${list.length ? `<table class="tbl"><thead><tr><th>Dep</th><th>Flight</th><th>To</th><th>Gate</th><th>Status</th><th class="r">Pax</th></tr></thead><tbody>${list.map((f) => `<tr><td class="mono">${clock(f.dep)}</td><td><span class="chip" style="--c:${airlineColor(f.airline)}">${f.number}</span></td><td>${esc(airport(f.dest).city)}</td><td>${gateLabel(s, gateOf(s, f)?.id) || '—'}</td><td class="small">${statusOf(s, f)}</td><td class="r">${f.phase === 'departed' ? `${f.boarded}/${f.paxOut}` : f.paxOut}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">No flights scheduled. Sign an airline in the Airlines tab.</p>'}</div>`;
   }
 
+  private opsView(): string {
+    const s = this.s;
+    const need = needed(s);
+    const roles = Object.keys(ROLES) as Role[];
+    const staffRows = roles.map((r) => {
+      const c = coverage(s, r);
+      return `<tr><td><b>${ROLES[r].name}</b><div class="small muted">${ROLES[r].desc}</div></td>
+        <td class="r">${num(s.staff[r])}<span class="muted"> / ${num(need[r])}</span><div class="meter ${c < 0.6 ? 'low' : c < 1 ? 'mid' : 'high'}"><i style="width:${c * 100}%"></i></div></td>
+        <td class="r nowrap"><button class="btn sm" data-act="hire" data-role="${r}" data-n="-5">−5</button><button class="btn sm" data-act="hire" data-role="${r}" data-n="-1">−1</button><button class="btn sm" data-act="hire" data-role="${r}" data-n="1">+1</button><button class="btn sm" data-act="hire" data-role="${r}" data-n="5">+5</button></td></tr>`;
+    }).join('');
+    const live = s.flights.filter((f) => f.phase !== 'cancelled');
+    const toSort = live.filter((f) => f.phase !== 'departed').reduce((n, f) => n + Math.max(0, f.bagsChecked - f.bagsSorted), 0);
+    const toLoad = live.filter((f) => f.phase !== 'departed').reduce((n, f) => n + Math.max(0, f.bagsSorted - f.bagsLoaded), 0);
+    const toBelt = live.reduce((n, f) => n + Math.max(0, f.bagsIn - f.bagsDelivered), 0);
+    const day0 = Math.floor(s.minute / 1440) * 1440;
+    const leftToday = live.filter((f) => f.phase === 'departed' && f.dep >= day0).reduce((n, f) => n + f.bagsLeft, 0);
+    const nightContracts = s.contracts.filter((c) => c.night).length;
+    return `<h2>Operations</h2>
+      <section class="card"><h3>${icon('gate')} Staff</h3>
+        <table class="tbl staff"><tbody>${staffRows}</tbody></table>
+        <div class="row small muted"><span>${shifts(s)} shifts per position${shifts(s) > 2 ? ' (night flights)' : ''}</span><span>Wages ${money(wagesPerDay(s))}/day</span></div>
+        <div class="actions"><button class="btn primary sm" data-act="staff-match">Match needs</button></div>
+      </section>
+      <section class="card"><h3>${icon('baggage')} Baggage</h3>
+        <section class="kpis">
+          ${this.kpi('Sorting', `${sortRate(s).toFixed(1)}/min`)}
+          ${this.kpi('Halls', halls(s).length ? num(halls(s).length) : 'Manual', halls(s).length ? '' : 'warn')}
+          ${this.kpi('Left behind today', num(leftToday), leftToday ? 'neg' : '')}
+          ${this.kpi('To sort', num(Math.round(toSort)), toSort > sortRate(s) * 40 ? 'neg' : '')}
+          ${this.kpi('To load', num(Math.round(toLoad)))}
+          ${this.kpi('To carousels', num(Math.round(toBelt)))}
+        </section>
+        <p class="small muted">Check-in hands bags to the baggage hall; trains carry them to the aircraft, which wait up to ${BAGS.maxWait} minutes for them. ${halls(s).length ? '' : 'Without a hall a small manual team sorts about 3 bags a minute.'}</p>
+      </section>
+      <section class="card"><h3>${icon('landing')} Night operations</h3>
+        <div class="seg">${(Object.keys(CURFEWS) as Curfew[]).map((c) => `<button class="${s.curfew === c ? 'on' : ''}" data-act="curfew" data-c="${c}">${CURFEWS[c].label}</button>`).join('')}</div>
+        <div class="conf"><span>Goodwill</span><div class="meter ${s.goodwill < 35 ? 'low' : s.goodwill < 60 ? 'mid' : 'high'}"><i style="width:${s.goodwill}%"></i></div><b>${Math.round(s.goodwill)}</b></div>
+        <p class="small muted">${nightContracts ? `${nightContracts} night contract${nightContracts > 1 ? 's' : ''}. ` : ''}Night movements pay ×${NIGHT.premium} landing fees but annoy the neighbours. Goodwill recovers each day, faster with a curfew. Below 50, airside building permits cost more (now ×${planningMultiplier(s).toFixed(2)}); below 15 the council imposes a curfew.${s.curfew !== 'none' ? ' A curfew ends night contracts.' : ''}</p>
+      </section>`;
+  }
+
   private moneyView(): string {
     const s = this.s;
     const days = [...s.history.slice(-6), { ...s.today, day: Math.floor(s.minute / 1440) }];
-    const max = Math.max(1, ...days.map((d) => Math.max(income(d), d.upkeep + d.construction)));
-    const rows: [string, number][] = [['Landing fees', s.today.landing], ['Passenger fees', s.today.paxFees], ['Food', s.today.food], ['Shops', s.today.retail], ['Parking', s.today.parking], ['Upkeep and staff', -s.today.upkeep], ['Construction', -s.today.construction]];
+    const max = Math.max(1, ...days.map((d) => Math.max(income(d), d.upkeep + d.wages + d.construction)));
+    const rows: [string, number][] = [['Landing fees', s.today.landing], ['Passenger fees', s.today.paxFees], ['Food', s.today.food], ['Shops', s.today.retail], ['Parking', s.today.parking], ['Upkeep', -s.today.upkeep], ['Wages', -s.today.wages], ['Construction', -s.today.construction]];
     return `<h2>Money</h2>
-      <section class="kpis">${this.kpi('Cash', money(s.cash), s.cash < 0 ? 'neg' : '')}${this.kpi('Upkeep / day', money(upkeepPerDay(s)))}${this.kpi('Income today', money(income(s.today)), 'pos')}</section>
+      <section class="kpis">${this.kpi('Cash', money(s.cash), s.cash < 0 ? 'neg' : '')}${this.kpi('Upkeep / day', money(upkeepPerDay(s)))}${this.kpi('Wages / day', money(wagesPerDay(s)))}</section>
       <section class="card"><h3>Today so far</h3><table class="tbl"><tbody>${rows.map(([k, v]) => `<tr><td>${k}</td><td class="r ${v < 0 ? 'neg' : v > 0 ? 'pos' : ''}">${money(v)}</td></tr>`).join('')}<tr class="total"><td><b>Net</b></td><td class="r"><b>${money(profit(s.today))}</b></td></tr></tbody></table></section>
-      <section class="card"><h3>Last 7 days</h3><div class="bars">${days.map((d) => `<div class="bar-col" title="Day ${d.day + 1}: income ${money(income(d))}, costs ${money(d.upkeep + d.construction)}"><i class="inc" style="height:${(income(d) / max) * 100}%"></i><i class="cost" style="height:${((d.upkeep + d.construction) / max) * 100}%"></i><span>D${d.day + 1}</span></div>`).join('')}</div>
+      <section class="card"><h3>Last 7 days</h3><div class="bars">${days.map((d) => `<div class="bar-col" title="Day ${d.day + 1}: income ${money(income(d))}, costs ${money(d.upkeep + d.wages + d.construction)}"><i class="inc" style="height:${(income(d) / max) * 100}%"></i><i class="cost" style="height:${((d.upkeep + d.wages + d.construction) / max) * 100}%"></i><span>D${d.day + 1}</span></div>`).join('')}</div>
       <div class="legend"><span class="inc">Income</span><span class="cost">Costs</span></div></section>`;
   }
 
@@ -553,7 +659,7 @@ export class Game {
       const st = serviceStats(b.id, s.minute);
       stats.push(
         this.kpi('Queue', num(st.queue), st.queue > 20 ? 'neg' : ''), this.kpi('Avg wait', `${Math.round(st.wait)} min`, st.wait > 15 ? 'neg' : st.wait > 8 ? 'warn' : 'pos'),
-        this.kpi('Served / hour', num(st.perHour)), this.kpi('Being served', `${Math.min(m.servers, usersOf(b.id))}/${m.servers}`),
+        this.kpi('Served / hour', num(st.perHour)), this.kpi('Staffed', `${openServers(s).get(b.id) ?? 0}/${m.servers}`, (openServers(s).get(b.id) ?? 0) < m.servers ? 'neg' : ''),
         this.kpi('Capacity / hour', num((m.servers! * 60) / m.serviceMin!)),
       );
     }
@@ -566,6 +672,10 @@ export class Game {
       extra = `<section class="card"><h3>${b.kind === 'gate' ? `Gate ${gateLabel(s, b.id)}` : 'Stand'}</h3>
         <p class="small muted">${b.link ? `Linked to ${b.kind === 'gate' ? 'a stand' : `gate ${gateLabel(s, b.link)}`}.` : b.kind === 'gate' ? 'No stand within reach yet.' : 'No gate within reach: passengers walk to another gate and are bussed.'}${b.kind.startsWith('stand_') && !reachableStands(s).has(b.id) ? ' <span class="neg">Not connected to the runway.</span>' : ''}</p>
         ${flights.length ? `<table class="tbl"><tbody>${flights.map((f) => `<tr><td class="mono">${clock(f.arr)}–${clock(f.dep)}</td><td><span class="chip" style="--c:${airlineColor(f.airline)}">${f.number}</span></td><td class="small">${statusOf(s, f)}</td></tr>`).join('')}</tbody></table>` : '<p class="muted small">No flights assigned.</p>'}</section>`;
+    }
+    if (b.kind === 'bagsort') {
+      const n = halls(s).length;
+      stats.push(this.kpi('Sorting', `${(sortRate(s) / n).toFixed(1)}/min`), this.kpi('Trains', num(BAGS.trainsPerHall)), this.kpi('Halls', num(n)));
     }
     if (b.kind === 'runway') extra = `<p class="muted small">${hasTower(s) ? 'Operating.' : '<span class="neg">Needs a control tower to operate.</span>'}</p>`;
     return `<button class="back" data-act="deselect">← Back</button>

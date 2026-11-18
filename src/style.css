@@ -170,6 +170,19 @@ main { position: relative; min-height: 0; overflow: hidden; }
 .legend span::before { content: ""; display: inline-block; width: 11px; height: 11px; margin-right: 5px; vertical-align: -1px; }
 .legend .inc::before { background: var(--yellow); } .legend .cost::before { background: var(--neg); }
 
+/* operations tab */
+.tag { display: inline-block; padding: 0 6px; font-size: 12px; font-weight: 700; }
+.tag.night { background: #1b2a5c; color: var(--yellow); }
+.seg { display: flex; gap: 0; margin-bottom: 8px; border: 2px solid var(--ink); }
+.seg button { flex: 1; background: var(--sign-3); color: var(--text); border: 0; padding: 7px 4px; font-weight: 600; font-size: 13px; cursor: pointer; }
+.seg button + button { border-left: 2px solid var(--ink); }
+.seg button.on { background: var(--yellow); color: var(--ink); }
+.nowrap { white-space: nowrap; }
+.tbl.staff td { vertical-align: middle; }
+.tbl.staff td.r:nth-child(2) { white-space: nowrap; min-width: 68px; }
+.tbl.staff .meter { margin-top: 4px; height: 5px; }
+.tbl.staff .btn.sm { padding: 2px 7px; margin-left: 2px; }
+
 /* buttons and forms */
 .btn { background: var(--sign-3); border: 0; padding: 7px 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--text); }
 .btn:hover:not(:disabled) { background: #555; }
@@ -198,7 +211,7 @@ input:focus, select:focus { outline: 3px solid var(--yellow); outline-offset: 0;
 @keyframes flip { 0% { transform: rotateX(80deg); filter: brightness(1.8); } 100% { transform: none; } }
 .fb-row[data-status="BOARDING"] .fb-status i { color: var(--pos); }
 .fb-row[data-status="GATE OPEN"] .fb-status i, .fb-row[data-status="CHECK-IN"] .fb-status i { color: var(--yellow); }
-.fb-row[data-status="DELAYED"] .fb-status i, .fb-row[data-status="CANCELLED"] .fb-status i, .fb-row[data-status="NO STAND"] .fb-status i { color: var(--neg); }
+.fb-row[data-status="DELAYED"] .fb-status i, .fb-row[data-status="BAGGAGE"] .fb-status i, .fb-row[data-status="CANCELLED"] .fb-status i, .fb-row[data-status="NO STAND"] .fb-status i { color: var(--neg); }
 .fb-row[data-status="DEPARTED"] .fb-status i { color: #6a6a66; }
 .fb-empty { color: var(--muted); font-size: 13px; padding: 4px 0; }
 

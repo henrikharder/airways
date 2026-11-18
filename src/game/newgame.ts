@@ -8,7 +8,7 @@ import { resetServices } from './passengers';
 import type { GameState } from './types';
 import { emptyLedger, T } from './types';
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 export interface NewGameOptions { name: string; code: string; city: string }
 
@@ -21,6 +21,7 @@ export function createGame(o: NewGameOptions): GameState {
     version: SAVE_VERSION, name: o.name, code: o.code, city: o.city, minute: 6 * 60, cash: START_CASH, rating: 55,
     W, H, tiles, buildings: [], contracts: [], offers: [], flights: [], pax: [], today: emptyLedger(), history: [],
     board: null as unknown as GameState['board'], news: [], nextId: 0, gameOver: false, scheduledDay: 0,
+    staff: { checkin: 0, security: 0, ground: 0 }, curfew: 'none', goodwill: 75,
   };
   // scatter trees, leaving the middle clear for building
   for (let i = 0; i < 70; i++) {

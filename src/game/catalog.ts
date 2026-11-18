@@ -1,7 +1,7 @@
 // What can be built, what it costs and how it behaves.
 
 import { acType } from '../data/aircraft';
-import type { ModuleKind, PaintKind } from './types';
+import type { ModuleKind, PaintKind, Role } from './types';
 
 export type Category = 'airside' | 'terminal' | 'comfort' | 'landside';
 export type StandClass = 's' | 'm' | 'l' | 'xl';
@@ -13,7 +13,7 @@ export interface ModuleSpec {
   w: number;
   h: number;
   cost: number;
-  upkeep: number; // per day, includes staff
+  upkeep: number; // per day, equipment and building (staff are paid separately)
   sprite: string | null; // sprite base name (rendered per rotation)
   indoor: boolean; // must sit on terminal floor
   rotatable: boolean;
@@ -34,15 +34,16 @@ export const MODULES: Record<ModuleKind, ModuleSpec> = {
   stand_xl: { kind: 'stand_xl', name: 'Stand XL', category: 'airside', w: 17, h: 17, cost: 750_000, upkeep: 2200, sprite: null, indoor: false, rotatable: true, desc: 'The A380.' },
   entrance: { kind: 'entrance', name: 'Entrance', category: 'terminal', w: 2, h: 1, cost: 40_000, upkeep: 100, sprite: 'entrance', indoor: true, rotatable: true, desc: 'Passengers arrive and leave here. Put it on the terminal edge by the road.' },
   exit: { kind: 'exit', name: 'Arrivals exit', category: 'terminal', w: 2, h: 1, cost: 30_000, upkeep: 80, sprite: 'exit', indoor: true, rotatable: true, desc: 'One-way door in a barrier line: arriving passengers leave the airside through it, departing ones cannot get in.' },
-  checkin: { kind: 'checkin', name: 'Check-in desks', category: 'terminal', w: 4, h: 2, cost: 90_000, upkeep: 1200, sprite: 'checkin', indoor: true, rotatable: true, desc: 'Four desks. Queue forms in front.', servers: 4, serviceMin: 2.5 },
-  security: { kind: 'security', name: 'Security lane', category: 'terminal', w: 2, h: 4, cost: 160_000, upkeep: 1800, sprite: 'security', indoor: true, rotatable: true, desc: 'Scanner and walk-through arch. Passengers enter from the front.', servers: 2, serviceMin: 1.4 },
+  checkin: { kind: 'checkin', name: 'Check-in desks', category: 'terminal', w: 4, h: 2, cost: 90_000, upkeep: 250, sprite: 'checkin', indoor: true, rotatable: true, desc: 'Four desks with bag drop. Each open desk needs a check-in agent on shift. Queue forms in front.', servers: 4, serviceMin: 2.5 },
+  security: { kind: 'security', name: 'Security lane', category: 'terminal', w: 2, h: 4, cost: 160_000, upkeep: 450, sprite: 'security', indoor: true, rotatable: true, desc: 'Scanner and walk-through arch, run by two security officers (about 140 passengers an hour). Passengers enter from the front.', servers: 2, serviceMin: 0.85 },
   gate: { kind: 'gate', name: 'Gate', category: 'terminal', w: 4, h: 4, cost: 70_000, upkeep: 500, sprite: 'gate', indoor: true, rotatable: true, desc: 'Waiting seats and boarding desk. Links to the nearest stand.', capacity: 24 },
-  baggage: { kind: 'baggage', name: 'Baggage claim', category: 'terminal', w: 3, h: 4, cost: 140_000, upkeep: 900, sprite: 'baggage', indoor: true, rotatable: true, desc: 'Arriving passengers collect their bags here.', capacity: 60, dwell: [6, 14] },
+  baggage: { kind: 'baggage', name: 'Baggage claim', category: 'terminal', w: 3, h: 4, cost: 140_000, upkeep: 900, sprite: 'baggage', indoor: true, rotatable: true, desc: 'Arriving passengers wait here until their bags come round on the belt.', capacity: 60, dwell: [2, 4] },
   food: { kind: 'food', name: 'Food court', category: 'comfort', w: 4, h: 4, cost: 120_000, upkeep: 700, sprite: 'food', indoor: true, rotatable: true, desc: 'Hungry passengers eat here. Good revenue.', capacity: 20, dwell: [12, 22], spend: 16 },
   shop: { kind: 'shop', name: 'Shop', category: 'comfort', w: 3, h: 3, cost: 90_000, upkeep: 500, sprite: 'shop', indoor: true, rotatable: true, desc: 'Duty free and souvenirs. The best earner per square metre.', capacity: 12, dwell: [8, 15], spend: 28 },
   toilets: { kind: 'toilets', name: 'Toilets', category: 'comfort', w: 2, h: 2, cost: 40_000, upkeep: 300, sprite: 'toilets', indoor: true, rotatable: true, desc: 'Everyone needs them eventually.', capacity: 6, dwell: [3, 6] },
   seats: { kind: 'seats', name: 'Seating', category: 'comfort', w: 2, h: 1, cost: 4_000, upkeep: 20, sprite: 'seats', indoor: true, rotatable: true, desc: 'A place to rest. Lifts mood a little.', capacity: 4, dwell: [10, 20] },
   carpark: { kind: 'carpark', name: 'Car park', category: 'landside', w: 6, h: 6, cost: 120_000, upkeep: 300, sprite: null, indoor: false, rotatable: false, desc: 'Parking income from passengers who drive. Next to the road.' },
+  bagsort: { kind: 'bagsort', name: 'Baggage hall', category: 'airside', w: 6, h: 4, cost: 650_000, upkeep: 1100, sprite: 'bagsort', indoor: false, rotatable: true, desc: 'Sorts checked bags and sends baggage trains to the stands. Must touch apron or taxiway. Without one, a small manual team handles about 3 bags a minute.' },
   tree: { kind: 'tree', name: 'Tree', category: 'landside', w: 1, h: 1, cost: 500, upkeep: 0, sprite: 'tree', indoor: false, rotatable: false, desc: 'Decoration.' },
 };
 
@@ -54,6 +55,30 @@ export const PAINTS: Record<PaintKind, { name: string; costPerTile: number; desc
 };
 
 export const BULLDOZE_REFUND = 0.4;
+
+// ---------- baggage ----------
+export const BAGS = {
+  manualRate: 3, // bags per minute sorted without a baggage hall
+  hallRate: 14, // bags per minute per baggage hall
+  manualTrains: 2, // carts the manual team can run
+  trainsPerHall: 4,
+  perTrain: 40, // bags per baggage train trip
+  trainSpeed: 8, // tiles per game minute
+  handling: 5, // minutes loading and unloading per trip
+  maxWait: 20, // minutes an aircraft will wait for late bags
+};
+
+// ---------- staff ----------
+export const ROLES: Record<Role, { name: string; wage: number; desc: string }> = {
+  checkin: { name: 'Check-in agents', wage: 150, desc: 'One per open check-in desk.' },
+  security: { name: 'Security officers', wage: 180, desc: 'Two per open security lane.' },
+  ground: { name: 'Ground crew', wage: 160, desc: 'Six per aircraft turnaround and four per baggage hall. Short-staffed crews unload, load and sort bags slower.' },
+};
+export const SHIFTS_DAY = 2; // hires per position to cover 05:00–23:00
+export const SHIFTS_NIGHT = 3; // round the clock
+
+// ---------- night operations ----------
+export const NIGHT = { start: 22 * 60, end: 6 * 60, premium: 1.6 }; // night movements pay landing fees × premium
 
 /** Stand class needed for an aircraft type, by wingspan. */
 export function standClassFor(typeId: string): StandClass {

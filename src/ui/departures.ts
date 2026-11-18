@@ -26,7 +26,10 @@ export function statusOf(s: GameState, f: Flight): string {
   switch (f.phase) {
     case 'cancelled': return 'CANCELLED';
     case 'departed': case 'takeoff': case 'lineup': case 'taxi_out': case 'pushback': return 'DEPARTED';
-    case 'parked': return now >= f.dep - 35 ? 'BOARDING' : now > f.dep ? 'DELAYED' : 'GATE OPEN';
+    case 'parked': {
+      if (now > f.dep + 1) return f.bagsLoaded < f.bagsChecked - 0.5 || f.bagsUnloaded < f.bagsIn - 0.5 ? 'BAGGAGE' : 'DELAYED';
+      return now >= f.dep - 35 ? 'BOARDING' : 'GATE OPEN';
+    }
     default: return now > f.dep ? 'DELAYED' : f.stand === null && now > f.arr - 60 ? 'NO STAND' : now >= f.dep - 150 ? 'CHECK-IN' : 'ON TIME';
   }
 }

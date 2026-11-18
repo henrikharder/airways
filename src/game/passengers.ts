@@ -2,6 +2,9 @@
 // goal, queues and is served, satisfies needs, and boards or leaves.
 
 import { MODULES, FEES } from './catalog';
+import { acType } from '../data/aircraft';
+import { drawBags } from './baggage';
+import { openServers } from './staff';
 import { gateOf } from './flights';
 import { accessTile, frontDir, getLayout, layoutStamp, localPoint, walkable } from './grid';
 import { distanceTo, nextStep, UNREACHABLE } from './paths';
@@ -132,7 +135,7 @@ export function newPax(s: GameState, f: Flight, dep: boolean, x: number, y: numb
     id: ++s.nextId, flight: f.id, dep, state: dep ? 'toCheckin' : 'toBaggage', stage: dep ? 'checkin' : 'baggage', target: 0,
     x, y, tx: x, ty: y, ox: rnd(-0.32, 0.32), oy: rnd(-0.32, 0.32), timer: 0,
     needs: (Math.random() < 0.55 ? NEED_FOOD : 0) | (Math.random() < 0.4 ? NEED_SHOP : 0) | (Math.random() < 0.45 ? NEED_TOILET : 0),
-    color: Math.floor(Math.random() * 6), facing: 0, mood: 75, waited: 0,
+    color: Math.floor(Math.random() * 6), facing: 0, mood: 75, waited: 0, bags: 0, bagAt: 0,
   };
   s.pax.push(p);
   return p;
@@ -143,13 +146,17 @@ export function spawnPax(s: GameState, f: Flight, dt: number): void {
   const now = s.minute;
   const entrances = ofKind(s, 'entrance');
   if (f.phase !== 'cancelled' && entrances.length) {
-    const t0 = f.dep - 150, t1 = f.dep - 55;
+    // long-haul passengers turn up earlier, as airlines ask them to
+    const long = acType(f.typeId).category === 'widebody' || acType(f.typeId).category === 'superjumbo';
+    const t0 = f.dep - (long ? 190 : 150), t1 = f.dep - (long ? 80 : 55);
     if (now >= t0 && now < t1 + dt) {
       const due = Math.min(f.paxOut, Math.round((f.paxOut * (Math.min(now, t1) - t0)) / (t1 - t0)));
       for (let i = f.spawned; i < due; i++) {
         const e = entrances[Math.floor(Math.random() * entrances.length)];
         const [x, y] = spawnPoint(e);
-        newPax(s, f, true, x + rnd(-0.3, 0.3), y + rnd(-0.3, 0.3));
+        const p = newPax(s, f, true, x + rnd(-0.3, 0.3), y + rnd(-0.3, 0.3));
+        p.bags = drawBags();
+        if (!p.bags) { p.state = 'toSecurity'; p.stage = 'security'; } // checked in online, hand luggage only
         if (s.buildings.some((b) => b.kind === 'carpark') && Math.random() < 0.35) { s.cash += FEES.parkingPerCar; s.today.parking += FEES.parkingPerCar; }
       }
       f.spawned = Math.max(f.spawned, due);
@@ -162,7 +169,11 @@ export function spawnPax(s: GameState, f: Flight, dt: number): void {
     for (let i = 0; i < n; i++) {
       const [x, y] = spawnPoint(gate, true);
       const p = newPax(s, f, false, x + rnd(-0.4, 0.4), y + rnd(-0.3, 0.3));
-      p.state = 'toBaggage';
+      p.bags = drawBags();
+      f.bagsIn += p.bags;
+      p.bagAt = f.bagsIn;
+      if (p.bags) p.state = 'toBaggage';
+      else { p.state = 'toExit'; p.stage = 'exit'; }
       // walk out through the gate lounge before following the flow field
       const [ax, ay] = accessTile(gate);
       p.tx = ax + 0.5 + p.ox; p.ty = ay + 0.5 + p.oy;
@@ -256,9 +267,13 @@ export function updatePax(s: GameState, dt: number, flights: Map<number, Flight>
     const f = flights.get(p.flight);
     const b = p.target ? L.byId.get(p.target) : undefined;
     if (p.state === 'queue' || p.state === 'service') p.waited += p.state === 'queue' ? dt : 0;
-    // missed flight
-    if (p.dep && f && (f.phase === 'pushback' || f.phase === 'taxi_out' || f.phase === 'lineup' || f.phase === 'takeoff' || f.phase === 'departed' || f.phase === 'cancelled') && p.state !== 'boarding' && p.state !== 'toExit') {
+    // missed flight: the gate closes 10 minutes before departure
+    const closed = f && ((f.phase === 'parked' && now >= f.dep - 10) || f.phase === 'pushback' || f.phase === 'taxi_out' || f.phase === 'lineup' || f.phase === 'takeoff' || f.phase === 'departed' || f.phase === 'cancelled');
+    const safe = p.state === 'boarding' || p.state === 'toExit' || (p.state === 'atGate' && f?.phase === 'parked' && !!b && b.kind === 'gate');
+    if (p.dep && f && closed && !safe) {
       if (f.phase !== 'cancelled') f.missed++;
+      // a no-show who checked bags: their bags must come off the aircraft before it can leave
+      if (f.phase === 'parked' && p.bags && p.stage !== 'checkin') f.waitUntil = Math.min(f.dep + 15, Math.max(f.waitUntil, f.dep + 3) + 0.4 * p.bags);
       p.mood -= f.phase === 'cancelled' ? 25 : 40;
       dropFromService(p);
       p.dep = false;
@@ -303,7 +318,10 @@ export function updatePax(s: GameState, dt: number, flights: Map<number, Flight>
         if (now >= (v.serving.get(p.id) ?? 0)) {
           v.serving.delete(p.id);
           v.done.push(now);
-          if (b.kind === 'checkin') goTo(p, choose(s, 'security', p), 'toSecurity', 'security') || nextAfterSecurity(s, p, f);
+          if (b.kind === 'checkin') {
+            if (f) f.bagsChecked += p.bags;
+            goTo(p, choose(s, 'security', p), 'toSecurity', 'security') || nextAfterSecurity(s, p, f);
+          }
           else {
             const m = MODULES[b.kind];
             const [ex, ey] = localPoint(b, m.w / 2, -0.4);
@@ -331,6 +349,12 @@ export function updatePax(s: GameState, dt: number, flights: Map<number, Flight>
       case 'atNeed': {
         if (!b) break;
         stepTo(p, p.tx, p.ty, WALK * dt * 0.5);
+        if (b.kind === 'baggage' && f && f.bagsDelivered < p.bagAt - 0.5) {
+          // still waiting for the last bag to come round
+          p.waited += dt;
+          if (p.waited > 15) p.mood -= 0.3 * dt;
+          break;
+        }
         if (now >= p.timer) {
           svc(b.id).users.delete(p.id);
           const [ax, ay] = accessTile(b);
@@ -375,13 +399,14 @@ export function updatePax(s: GameState, dt: number, flights: Map<number, Flight>
   }
   s.pax = s.pax.filter((p) => p.timer !== -1);
 
-  // serve queues
+  // serve queues at desks and lanes that have staff on shift
+  const open = openServers(s);
   for (const b of s.buildings) {
     const m = MODULES[b.kind];
     if (!m.servers) continue;
     const v = services.get(b.id);
     if (!v) continue;
-    while (v.queue.length && v.serving.size < m.servers) {
+    while (v.queue.length && v.serving.size < (open.get(b.id) ?? m.servers)) {
       const id = v.queue.shift()!;
       v.serving.set(id, now + (m.serviceMin ?? 2) * rnd(0.6, 1.4));
       v.wait += (now - (v.joined.get(id) ?? now) - v.wait) * 0.1;

@@ -66,9 +66,17 @@ Satisfaction falls with queue time, crowding, unmet needs, missed flights; it fe
 
 ## Economy
 
-Revenue: landing fees (by aircraft weight), passenger fees, retail and food spend, parking.
-Costs: construction, daily upkeep and staff per module, loan interest.
+Revenue: landing fees (by aircraft weight, ×1.6 at night), passenger fees, retail and food spend, parking.
+Costs: construction, daily upkeep per module, staff wages.
 Board: weekly objectives with cash bonuses and confidence (carried over).
 
+## Operations
+
+- **Baggage.** Passengers check 0–2 bags (those without go straight to security). Bags are sorted at a baggage hall (14 bags/min; a manual team does 3/min if there is none) and carried by baggage trains along the taxiways to the stands. Aircraft wait up to 20 minutes for bags, then leave without them. Arriving bags go back through the hall to the carousels, where passengers wait for them.
+- **Staff.** Check-in agents, security officers and ground crew are hired per role. Each position needs two hires to cover the day, three with night flights. Desks and lanes only open when staffed; short ground crews slow baggage.
+- **Night operations.** Airlines offer red-eye rotations at a landing-fee premium. Night movements cost the neighbours' goodwill, which recovers daily (faster under a curfew). Low goodwill makes airside permits expensive; very low goodwill brings an imposed curfew.
+- **Gate close.** Gates close 10 minutes before departure; no-shows are offloaded and their bags removed, which can delay pushback.
+- **Timetables.** Each contract flies a fixed daily timetable, spread through the day.
+
 ## Later
-Baggage system, transfers, lounges, passport control, staff and vehicles, night curfews, multiple terminals and floors, rotating camera.
+Transfers, lounges, passport control, multiple terminals and floors, rotating camera.
