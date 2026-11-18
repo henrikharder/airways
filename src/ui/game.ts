@@ -4,8 +4,9 @@ import { progress, weekLabel } from '../game/board';
 import { BAGS, MODULES, NIGHT, PAINTS, ROLES, standClassFor, standFits, type Category } from '../game/catalog';
 import { bagsPending, halls, sortRate } from '../game/baggage';
 import { busCount, isRemote } from '../game/buses';
-import { crossesBorder, hasPassportControl, ZONE_LABEL, zoneOf, type GateZone } from '../game/border';
+import { crossesBorder, FLOW_LABEL, hasPassportControl, ZONE_LABEL, zoneOf, type GateZone } from '../game/border';
 import { hasTransferDesk, hubShare } from '../game/hub';
+import { scenarioDef, scenarioProgress, SCENARIOS, startScenario } from '../game/scenarios';
 import { CURFEWS, planningMultiplier, setCurfew } from '../game/night';
 import { coverage, needed, openServers, positions, shifts, staffToNeed, wagesPerDay } from '../game/staff';
 import { acceptOffer, airlineColor, airlineName, allocateStands, declineOffer, gateOf, reachableStands, runway, hasTower } from '../game/flights';
@@ -36,7 +37,7 @@ const SPEED_LABEL = ['', '1×', '2×', '3×', '4×'];
 
 const PALETTE: { cat: Category | 'tools'; label: string; items: ({ build: ModuleKind } | { paint: PaintKind })[] }[] = [
   { cat: 'airside', label: 'Airside', items: [{ build: 'runway' }, { build: 'tower' }, { paint: 'taxiway' }, { paint: 'apron' }, { build: 'stand_s' }, { build: 'stand_m' }, { build: 'stand_l' }, { build: 'stand_xl' }, { build: 'bagsort' }] },
-  { cat: 'terminal', label: 'Terminal', items: [{ paint: 'floor' }, { build: 'entrance' }, { build: 'checkin' }, { build: 'security' }, { paint: 'barrier' }, { build: 'exit' }, { build: 'passport' }, { build: 'gate' }, { build: 'busgate' }, { build: 'transfer' }, { build: 'baggage' }] },
+  { cat: 'terminal', label: 'Terminal', items: [{ paint: 'floor' }, { build: 'entrance' }, { build: 'checkin' }, { build: 'security' }, { paint: 'barrier' }, { paint: 'skywalk' }, { build: 'exit' }, { build: 'passport' }, { build: 'egates' }, { build: 'gate' }, { build: 'busgate' }, { build: 'transfer' }, { build: 'baggage' }] },
   { cat: 'comfort', label: 'Comforts', items: [{ build: 'food' }, { build: 'shop' }, { build: 'lounge' }, { build: 'toilets' }, { build: 'seats' }] },
   { cat: 'landside', label: 'Landside', items: [{ build: 'carpark' }, { build: 'tree' }] },
 ];
@@ -45,7 +46,7 @@ const ITEM_ICON: Partial<Record<ModuleKind | PaintKind, IconName>> = {
   runway: 'runway', tower: 'tower', taxiway: 'taxiway', apron: 'floor', stand_s: 'stand', stand_m: 'stand', stand_l: 'stand', stand_xl: 'stand',
   floor: 'terminal', entrance: 'entrance', checkin: 'checkin', security: 'security', gate: 'gate', baggage: 'baggage', food: 'food', shop: 'shop',
   toilets: 'toilets', seats: 'seats', carpark: 'car', tree: 'tree', bagsort: 'baggage', busgate: 'bus', passport: 'passport', barrier: 'barrier', exit: 'exit',
-  transfer: 'security', lounge: 'seats',
+  transfer: 'security', lounge: 'seats', egates: 'passport', skywalk: 'bridge',
 };
 
 export class Game {
@@ -78,7 +79,7 @@ export class Game {
         <div id="stage"></div>
         <nav id="palette"></nav>
         <div id="warnings"></div>
-        <div id="viewbar"><button data-act="heat" title="Crowding heatmap (H)">${icon('gauge')} Crowding</button></div>
+        <div id="viewbar"><button data-act="view" data-step="-1" title="Turn the view (Q)">${icon('rotateBack')}</button><button data-act="view" data-step="1" title="Turn the view (E)">${icon('rotate')}</button><button data-act="heat" title="Crowding heatmap (H)">${icon('gauge')} Crowding</button></div>
         <aside id="panel"><nav id="tabs"></nav><div id="view"></div></aside>
         <div id="tip" hidden></div>
         <div id="coach" hidden></div>
@@ -203,6 +204,7 @@ export class Game {
       }
       if (this.s.board.meeting && this.$('#overlay').hidden) this.showMeeting();
       if (this.s.gameOver && this.$('#overlay').hidden) this.showGameOver();
+      if (this.s.scenario?.result && !this.s.scenario.shown && this.$('#overlay').hidden) this.showScenarioResult();
     }
     requestAnimationFrame((n) => this.frame(n));
   }
@@ -212,14 +214,36 @@ export class Game {
   private bindInput(): void {
     const stage = this.$('#stage');
     stage.addEventListener('contextmenu', (e) => e.preventDefault());
+    // touch: two fingers pinch-zoom and pan; one finger taps, drags and builds like a mouse
+    const touches = new Map<number, [number, number]>();
+    let pinch: { d: number; mx: number; my: number } | null = null;
+    const pinchState = () => {
+      const [a, b] = [...touches.values()];
+      return { d: Math.hypot(a[0] - b[0], a[1] - b[1]), mx: (a[0] + b[0]) / 2, my: (a[1] + b[1]) / 2 };
+    };
     stage.addEventListener('pointerdown', (e) => {
-      if (!this.s) return;
+      if (e.pointerType === 'touch') {
+        touches.set(e.pointerId, [e.clientX, e.clientY]);
+        if (touches.size === 2) { this.drag = null; pinch = pinchState(); return; } // a second finger cancels the tap/drag
+      }
+      if (!this.s || pinch) return;
       const tile = this.tileAt(e);
       this.drag = { x: e.clientX, y: e.clientY, tile, button: e.button, moved: false };
       stage.setPointerCapture(e.pointerId);
     });
     stage.addEventListener('pointermove', (e) => {
       if (!this.s) return;
+      if (e.pointerType === 'touch' && touches.has(e.pointerId)) {
+        touches.set(e.pointerId, [e.clientX, e.clientY]);
+        if (pinch && touches.size === 2) {
+          const now = pinchState();
+          const r = stage.getBoundingClientRect();
+          this.scene.panBy(now.mx - pinch.mx, now.my - pinch.my);
+          if (pinch.d > 10) this.scene.zoomAt(now.mx - r.left, now.my - r.top, now.d / pinch.d);
+          pinch = now;
+          return;
+        }
+      }
       this.hover = this.tileAt(e);
       if (this.drag) {
         const dx = e.clientX - this.drag.x, dy = e.clientY - this.drag.y;
@@ -233,7 +257,13 @@ export class Game {
       }
       this.updateTip(e);
     });
+    const lift = (e: PointerEvent) => {
+      touches.delete(e.pointerId);
+      if (touches.size < 2 && pinch) { pinch = null; this.drag = null; }
+    };
+    stage.addEventListener('pointercancel', lift);
     stage.addEventListener('pointerup', (e) => {
+      if (e.pointerType === 'touch') lift(e);
       if (!this.s || !this.drag) return;
       const d = this.drag;
       this.drag = null;
@@ -261,6 +291,8 @@ export class Game {
       else if (/^Digit[0-4]$/.test(e.code)) this.setSpeed(Number(e.code.slice(5)));
       else if (e.key === 'b') this.setTool({ t: 'bulldoze' });
       else if (e.key === 'h') this.toggleHeat();
+      else if (e.key === 'q') this.scene.rotateView(this.s, -1);
+      else if (e.key === 'e') this.scene.rotateView(this.s, 1);
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
     const unlock = () => this.sound.unlock();
@@ -401,6 +433,7 @@ export class Game {
       }
       case 'rotate': this.rot = (this.rot + 1) % 4; return;
       case 'heat': return this.toggleHeat();
+      case 'view': this.scene.rotateView(this.s, Number(d.step) as 1 | -1); return;
       case 'speed': return this.setSpeed(Number(d.speed));
       case 'tab': this.tab = d.tab as Tab; this.selected = null; return this.renderPanel();
       case 'accept': { const err = acceptOffer(this.s, Number(d.id)); if (err) this.toast(err, 'err'); else { this.toast('Contract signed'); this.sound.play('cash'); } return this.renderPanel(); }
@@ -412,6 +445,12 @@ export class Game {
       }
       case 'staff-match': staffToNeed(this.s); this.toast('Staff matched to the airport'); return this.renderPanel();
       case 'curfew': setCurfew(this.s, d.c as Curfew); return this.renderPanel();
+      case 'flow': {
+        if (!this.selected) return;
+        const order = ['both', 'out', 'in'] as const;
+        this.selected.flow = order[(order.indexOf(this.selected.flow ?? 'both') + 1) % 3];
+        return this.renderPanel();
+      }
       case 'zone': {
         if (!this.selected) return;
         const order: GateZone[] = ['swing', 'schengen', 'border'];
@@ -620,6 +659,7 @@ export class Game {
         ${this.kpi('Profit yesterday', yesterday ? money(profit(yesterday)) : '—', yesterday && profit(yesterday) < 0 ? 'neg' : 'pos')}
         ${this.kpi('Upkeep / day', money(upkeepPerDay(s)))}
       </section>
+      ${this.goalCard()}
       <section class="card objective"><h3>${icon('target')} Board objective · ${weekLabel(s)}</h3>
         <p><b>${esc(b.objective.label)}</b></p>
         <div class="progress"><i style="width:${Math.min(100, prog.value * 100)}%"></i></div>
@@ -627,6 +667,20 @@ export class Game {
         <div class="conf"><span>Board confidence</span><div class="meter ${b.confidence < 30 ? 'low' : b.confidence < 60 ? 'mid' : 'high'}"><i style="width:${b.confidence}%"></i></div><b>${Math.round(b.confidence)}</b></div>
       </section>
       <section class="card"><h3>Latest news</h3><ul class="news">${s.news.slice(0, 6).map((n) => `<li class="${n.tone}"><span class="muted mono">D${Math.floor(n.min / 1440) + 1} ${clock(n.min)}</span> ${esc(n.text)}</li>`).join('')}</ul></section>`;
+  }
+
+  private goalCard(): string {
+    const s = this.s;
+    const def = scenarioDef(s);
+    const p = scenarioProgress(s);
+    if (!def?.goal || !p) return '';
+    const day = Math.floor(s.minute / 1440) + 1;
+    const res = s.scenario?.result;
+    return `<section class="card goal"><h3>${icon('trophy')} ${esc(def.title)}</h3>
+      <p><b>${esc(def.goal.label)}</b></p>
+      <div class="progress"><i style="width:${Math.min(100, p.value * 100)}%"></i></div>
+      <div class="row small muted"><span>Best so far ${p.text}</span><span>${res === 'won' ? 'Achieved!' : res === 'lost' ? 'Time is up' : `${Math.max(0, def.goal.byDay - day + 1)} days left`}</span></div>
+    </section>`;
   }
 
   private airlinesView(): string {
@@ -754,6 +808,7 @@ export class Game {
       const n = halls(s).length;
       stats.push(this.kpi('Sorting', `${(sortRate(s) / n).toFixed(1)}/min`), this.kpi('Trains', num(BAGS.trainsPerHall)), this.kpi('Halls', num(n)));
     }
+    if (b.kind === 'passport' || b.kind === 'egates') extra = `<section class="card"><div class="row"><span>Serves: <b>${FLOW_LABEL[b.flow ?? 'both']}</b></span><button class="btn sm" data-act="flow">Change</button></div><p class="small muted">Big airports split passport control into a departures hall and an arrivals hall.</p></section>`;
     if (b.kind === 'busgate') stats.push(this.kpi('Buses', num(busCount(s))), this.kpi('Seats each', '50'));
     if (b.kind === 'runway') extra = `<p class="muted small">${hasTower(s) ? 'Operating.' : '<span class="neg">Needs a control tower to operate.</span>'}</p>`;
     return `<button class="back" data-act="deselect">← Back</button>
@@ -793,6 +848,18 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- menu and tutorial
+
+  private showScenarioResult(): void {
+    const sc = this.s.scenario!;
+    sc.shown = true;
+    const def = scenarioDef(this.s);
+    const won = sc.result === 'won';
+    this.sound.play(won ? 'chime' : 'alert');
+    this.overlay(`<div class="modal small"><h2>${won ? 'Goal reached!' : 'Out of time'}</h2>
+      <p>${esc(def?.goal?.label ?? '')}${won ? ` on day ${Math.floor(this.s.minute / 1440) + 1}.` : ` by day ${def?.goal?.byDay}: not this time.`}</p>
+      <p class="muted">${won ? 'The airport is yours to keep growing.' : 'You can keep building, or try again from the start screen.'}</p>
+      <div class="actions"><button class="btn primary" data-act="menu-close">Keep playing</button><button class="btn" data-act="new">New game</button></div></div>`);
+  }
 
   private openMenu(page: 'main' | 'save' | 'load' | 'settings'): void {
     if (!this.s) return;
@@ -841,7 +908,8 @@ export class Game {
         <label>Code<input id="ng-code" value="CPN" maxlength="3" class="upper"></label>
         <label class="wide">Near which city<select id="ng-city">${cities.map((a) => `<option value="${a.iata}" ${a.iata === 'CPH' ? 'selected' : ''}>${esc(a.city)} (${a.country})</option>`).join('')}</select></label>
       </div>
-      <label class="toggle"><input type="checkbox" id="ng-tutorial" ${hasSave() ? '' : 'checked'}> Guided tutorial for my first airport</label>
+      <div class="scenarios">${SCENARIOS.map((sc, i) => `<label class="scenario"><input type="radio" name="ng-scenario" value="${sc.id}" ${i === 0 ? 'checked' : ''}><b>${esc(sc.title)}</b><span class="small muted">${esc(sc.blurb)}</span>${sc.goal ? `<span class="small">Goal: ${esc(sc.goal.label)} by day ${sc.goal.byDay}</span>` : ''}</label>`).join('')}</div>
+      <label class="toggle"><input type="checkbox" id="ng-tutorial" ${hasSave() ? '' : 'checked'}> Guided tutorial (sandbox)</label>
       <div class="actions"><button class="btn primary big" data-act="start">Break ground</button></div>
       <p class="muted small">Drag to pan, scroll to zoom, R to rotate, Space to pause. Bigger and richer cities bring more demand.</p>
     </div>`);
@@ -852,7 +920,9 @@ export class Game {
     const code = ((this.$('#ng-code') as HTMLInputElement).value.trim().toUpperCase() || 'NEW').slice(0, 3);
     const city = (this.$('#ng-city') as HTMLSelectElement).value;
     const s = createGame({ name, code, city });
-    s.tutorial = newTutorial((this.$('#ng-tutorial') as HTMLInputElement | null)?.checked ?? false);
+    const scenario = (this.root.querySelector('input[name="ng-scenario"]:checked') as HTMLInputElement | null)?.value ?? 'sandbox';
+    startScenario(s, scenario);
+    s.tutorial = newTutorial(scenario === 'sandbox' && ((this.$('#ng-tutorial') as HTMLInputElement | null)?.checked ?? false));
     saveGame(s);
     this.start(s);
   }

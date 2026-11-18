@@ -33,6 +33,14 @@ export function gateAllows(s: GameState, g: Building | undefined, f: Flight): bo
   return z === 'swing' || (z === 'border') === isBorder(s, f);
 }
 
+export const FLOW_LABEL: Record<NonNullable<Building['flow']>, string> = { both: 'Departures and arrivals', out: 'Departures only', in: 'Arrivals only' };
+
+/** Does this passport point serve passengers going this way? */
+export function flowAllows(b: Building, departing: boolean): boolean {
+  const f = b.flow ?? 'both';
+  return f === 'both' || (f === 'out') === departing;
+}
+
 export function hasPassportControl(s: GameState): boolean {
   return s.buildings.some((b) => b.kind === 'passport');
 }

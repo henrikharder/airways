@@ -4,7 +4,7 @@
 
 import { Container, Graphics, Sprite, Texture } from 'pixi.js';
 import { MODULES, spriteType } from '../game/catalog';
-import { runway } from '../game/flights';
+import { runways } from '../game/flights';
 import { idx, localPoint } from '../game/grid';
 import type { GameState } from '../game/types';
 import { T } from '../game/types';
@@ -122,8 +122,7 @@ export class Lights {
       } else if (m.indoor) this.pool(P, b.x + b.w / 2, b.y + b.h / 2, Math.max(b.w, b.h) * 0.6, 0xffcf8a, 0.05);
     }
     // runway edge lights (white), threshold green, far end red
-    const rw = runway(s);
-    if (rw) {
+    for (const rw of runways(s)) {
       const along = rw.rot % 2 === 0;
       const len = along ? rw.w : rw.h;
       const cx = along ? rw.y + rw.h / 2 : rw.x + rw.w / 2;

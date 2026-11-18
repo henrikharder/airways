@@ -1,6 +1,7 @@
 // Split-flap departure board for the airport's flights.
 
 import { isRemote } from '../game/buses';
+import { gateName } from '../game/terminals';
 import { readyAt } from '../game/types';
 import { airport } from '../data/airports';
 import { gateOf } from '../game/flights';
@@ -17,10 +18,7 @@ function strip(s: string): string {
 }
 
 export function gateLabel(s: GameState, id: number | undefined): string {
-  if (!id) return '';
-  const gates = s.buildings.filter((b) => b.kind === 'gate').sort((a, b) => a.id - b.id);
-  const i = gates.findIndex((g) => g.id === id);
-  return i < 0 ? '' : `G${i + 1}`;
+  return gateName(s, id);
 }
 
 export function statusOf(s: GameState, f: Flight): string {

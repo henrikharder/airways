@@ -58,8 +58,9 @@ def reset():
     except Exception as e:  # noqa: BLE001 - CPU fallback is fine
         print('GPU unavailable, using CPU:', e)
     sc.render.film_transparent = True
-    sc.render.image_settings.file_format = 'PNG'
+    sc.render.image_settings.file_format = 'WEBP'
     sc.render.image_settings.color_mode = 'RGBA'
+    sc.render.image_settings.quality = 88  # lossy WebP with alpha: a fraction of the PNG size
     sc.view_settings.view_transform = 'Standard'
     sc.view_settings.look = 'None'
     world = bpy.data.worlds.new('World')
@@ -269,7 +270,7 @@ def render(name, objs, ppu=PPU, mask=False, shadow=True):
     sc.render.resolution_x = max(2, math.ceil(wu * ppu))
     sc.render.resolution_y = max(2, math.ceil(hu * ppu))
     sc.render.resolution_percentage = 100
-    path = os.path.join(OUT, f'{name}.png')
+    path = os.path.join(OUT, f'{name}.webp')
     sc.render.filepath = path
 
     catcher = None
@@ -819,6 +820,27 @@ def jb_rotunda(b):
     smooth(b.cyl(0, 0, 0.88, 0.91, 0.315, mat(C['accent'], 0.4), 32))
 
 
+def m_egates(b):
+    """E-gates (3×2): four automated passport gates with glass flaps and face cameras; queue in front (+gy)."""
+    b.box(0.05, 0.1, 0, 2.95, 1.9, 0.012, mat('#55657f', 0.95))
+    for k in range(5):  # cabinets between the lanes
+        x = 0.15 + k * 0.66
+        b.box(x, 0.5, 0, x + 0.12, 1.5, 0.34, mat('#e5e7eb', 0.3), 0.02)
+        b.box(x + 0.02, 1.3, 0.34, x + 0.1, 1.38, 0.5, mat('#1f2530', 0.3))  # camera post
+        b.box(x + 0.03, 1.38, 0.42, x + 0.09, 1.385, 0.48, mat('#60a5fa', 0.3, 1.2))
+    for k in range(4):  # glass flaps, half open
+        x = 0.27 + k * 0.66
+        b.box(x, 0.95, 0.12, x + 0.2, 0.97, 0.36, mat(C['glass'], 0.05))
+        b.box(x + 0.34, 0.95, 0.12, x + 0.54, 0.97, 0.36, mat(C['glass'], 0.05))
+        b.box(x + 0.22, 1.48, 0.3, x + 0.32, 1.5, 0.36, mat('#22c55e', 0.3, 1.5))
+    b.box(0.1, 0.18, 0.78, 2.9, 0.3, 0.98, mat('#1e3a8a', 0.4), 0.02)
+    b.box(0.25, 0.3, 0.82, 0.5, 0.305, 0.94, mat('#ffcc00', 0.4, 0.8))
+    for k in range(5):
+        b.box(0.65 + k * 0.3, 0.3, 0.84, 0.85 + k * 0.3, 0.305, 0.92, mat('#f8fafc', 0.3, 0.8))
+    for x in (0.1, 2.82):
+        b.box(x, 0.2, 0, x + 0.08, 0.28, 0.98, mat('#2b3240', 0.4))
+
+
 def m_transfer(b):
     """Transfer desk (3×2): a compact screening point for connecting passengers, queue in front (+gy)."""
     b.box(0.05, 0.1, 0, 2.95, 1.9, 0.012, mat('#55657f', 0.95))
@@ -975,7 +997,7 @@ def m_bagsort(b):
 MODULES = {
     'checkin': (4, 2, m_checkin), 'security': (2, 4, m_security), 'gate': (4, 4, m_gate), 'food': (4, 4, m_food),
     'shop': (3, 3, m_shop), 'toilets': (2, 2, m_toilets), 'seats': (2, 1, m_seats), 'baggage': (3, 4, m_baggage),
-    'entrance': (2, 1, m_entrance), 'bagsort': (6, 4, m_bagsort), 'busgate': (4, 3, m_busgate), 'passport': (3, 3, m_passport), 'transfer': (3, 2, m_transfer), 'lounge': (5, 4, m_lounge), 'exit': (2, 1, m_exit), 'tower': (3, 3, m_tower), 'tree': (1, 1, m_tree)
+    'entrance': (2, 1, m_entrance), 'bagsort': (6, 4, m_bagsort), 'busgate': (4, 3, m_busgate), 'passport': (3, 3, m_passport), 'transfer': (3, 2, m_transfer), 'egates': (3, 2, m_egates), 'lounge': (5, 4, m_lounge), 'exit': (2, 1, m_exit), 'tower': (3, 3, m_tower), 'tree': (1, 1, m_tree)
 }
 
 # ---------------------------------------------------------------- aircraft (real dimensions, metres)

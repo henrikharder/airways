@@ -4,13 +4,21 @@
 import { Application, Assets, Container, Graphics, Matrix, Sprite, Text, Texture } from 'pixi.js';
 import manifest from '../generated/sprites.json';
 import { MODULES, spriteType } from '../game/catalog';
-import { airlineColor, runway } from '../game/flights';
+import { airlineColor, runways } from '../game/flights';
 import { footprint, getLayout, idx, localPoint, standPoints } from '../game/grid';
 import type { Building, GameState, ModuleKind } from '../game/types';
 import { T } from '../game/types';
-import { isoX, isoY, screenToGrid, TH, TW, ZPX } from './iso';
+import { depth, dirToView, footprintView, isoX, isoY, screenToGrid, toView, towardsCamera, TH, TW, vface, view, vX, vY, ZPX } from './iso';
 import { CARPARK_ROWS, GroundLife } from './life';
+import { terminals } from '../game/terminals';
 import { Lights } from './lights';
+
+const SKYWALK_Z = 0.75; // deck height in tiles
+
+/** The edge of a unit view tile facing view direction (dx, dy), as [a0, b0, a1, b1]. */
+function edgeInView(dx: number, dy: number): [number, number, number, number] {
+  return dx === 1 ? [1, 0, 1, 1] : dx === -1 ? [0, 0, 0, 1] : dy === 1 ? [0, 1, 1, 1] : [0, 0, 1, 0];
+}
 
 const SRC_TILE = 128; // tile width in rendered sprites (manifest scale 1); matches TILE_PX in art/build.py
 
@@ -63,6 +71,8 @@ export class Scene {
   private textures = new Map<string, Texture>();
   private buildingSprites = new Map<number, Container>();
   private aircraftSprites = new Map<number, Container>();
+  private skywalkGfx = new Map<number, Graphics>();
+  private skywalkKey = '';
   private life!: GroundLife;
   private paxSprites = new Map<number, Sprite>();
   private ghostSprite: Sprite | null = null;
@@ -81,7 +91,7 @@ export class Scene {
     const base = import.meta.env.BASE_URL;
     // aircraft are most of the texture memory, so each type loads the first time it appears
     const names = Object.keys(FRAMES).filter((n) => !n.startsWith('ac_'));
-    const loaded = await Assets.load(names.map((n) => ({ alias: n, src: `${base}sprites/${n}.png` })));
+    const loaded = await Assets.load(names.map((n) => ({ alias: n, src: `${base}sprites/${n}.webp` })));
     for (const n of names) this.textures.set(n, loaded[n] as Texture);
     this.life = new GroundLife({ make: (n) => this.makeSprite(n), frames: FRAMES, textures: this.textures, scale: (n) => this.frameScale(n), layer: this.objects });
   }
@@ -95,7 +105,7 @@ export class Scene {
       this.aircraftLoading.add(type);
       const base = import.meta.env.BASE_URL;
       const names = Object.keys(FRAMES).filter((n) => n.startsWith(`ac_${type}_`));
-      Assets.load(names.map((n) => ({ alias: n, src: `${base}sprites/${n}.png` }))).then((loaded) => {
+      Assets.load(names.map((n) => ({ alias: n, src: `${base}sprites/${n}.webp` }))).then((loaded) => {
         for (const n of names) this.textures.set(n, loaded[n] as Texture);
       }).catch(() => this.aircraftLoading.delete(type)); // try again next frame
     }
@@ -216,8 +226,7 @@ export class Scene {
     // road dashes
     for (let x = 0; x < s.W; x += 2) if (t(x, s.H - 2) === T.Road) this.line(g, x + 0.2, s.H - 2, x + 1.0, s.H - 2, 0xf3f4f6, 0.8, 0.8);
     // runway markings
-    const rw = runway(s);
-    if (rw) {
+    for (const rw of runways(s)) {
       const along = rw.rot % 2 === 0;
       const len = along ? rw.w : rw.h;
       const cx = along ? rw.y + rw.h / 2 : rw.x + rw.w / 2;
@@ -243,6 +252,9 @@ export class Scene {
       const er = [localPoint(b, k, 0.2), localPoint(b, k, m.h - k), localPoint(b, m.w - k, m.h - k), localPoint(b, m.w - k, 0.2)];
       for (let i = 0; i < 3; i++) this.dashed(g, ...er[i], ...er[i + 1], 0xd0261b, 1.1, 0.45);
     }
+    // terminal names painted at each terminal's north-west corner
+    const terms = terminals(s).list;
+    if (terms.length) for (const t of terms) this.paintText(`T${t.n + 1}`, t.x0 + 0.6, t.y0 + 0.6, 1.6, 0x8a8a84);
     // stand numbers painted on the apron, in order along the terminal
     for (const c of this.groundText.removeChildren()) c.destroy();
     const stands = s.buildings.filter((b) => b.kind.startsWith('stand_')).sort((a, b) => a.x - b.x || a.y - b.y);
@@ -290,17 +302,24 @@ export class Scene {
         g.poly([ax, ay, bx, by, bx, by - h, ax, ay - h]).fill({ color: shade, alpha: 0.55 });
         g.moveTo(ax, ay - h).lineTo(bx, by - h).stroke({ color: 0xffffff, width: 0.8, alpha: 0.9 });
       };
-      if (!indoor(t(x, y - 1))) wall(x, y, x + 1, y, 0x9fd3f5);
-      if (!indoor(t(x - 1, y))) wall(x, y, x, y + 1, 0x86c3ec);
+      // only the edges on the far side of the tile (as seen in this view) get a wall face
+      const edges: [number, number, number, number, number, number][] = [[0, -1, x, y, x + 1, y], [-1, 0, x, y, x, y + 1], [0, 1, x, y + 1, x + 1, y + 1], [1, 0, x + 1, y, x + 1, y + 1]];
+      for (const [dx, dy, x0, y0, x1, y1] of edges) {
+        if (indoor(t(x + dx, y + dy))) continue;
+        const [vx, vy] = dirToView(dx, dy);
+        if (vx + vy > 0) continue; // a near edge: it would hide the floor
+        wall(x0, y0, x1, y1, vx < 0 ? 0x86c3ec : 0x9fd3f5);
+      }
     }
     // structural columns on a 6-tile grid inside the terminal
     const occ = getLayout(s).occ;
     for (let y = 0; y < s.H; y++) for (let x = 0; x < s.W; x++) {
       if (x % 6 || y % 6 || t(x, y) !== T.Floor || occ[idx(s, x, y)]) continue;
-      if (!indoor(t(x - 1, y)) || !indoor(t(x, y - 1))) continue; // not on the facade
+      if (!indoor(t(x - 1, y)) || !indoor(t(x, y - 1)) || !indoor(t(x - 1, y - 1))) continue; // not on the facade
       const c = 0.14, h = ZPX * 0.9;
-      const p = (gx: number, gy: number) => [isoX(gx, gy), isoY(gx, gy)];
-      const [lx, ly] = p(x - c, y + c), [fx, fy] = p(x + c, y + c), [rx, ry] = p(x + c, y - c), [tx, ty] = p(x - c, y - c);
+      const [vx, vy] = toView(x, y);
+      const p = (a: number, b: number) => [vX(vx + a, vy + b), vY(vx + a, vy + b)];
+      const [lx, ly] = p(-c, c), [fx, fy] = p(c, c), [rx, ry] = p(c, -c), [tx, ty] = p(-c, -c);
       g.poly([lx, ly, fx, fy, fx, fy - h, lx, ly - h]).fill({ color: 0xc9c3b8 });
       g.poly([fx, fy, rx, ry, rx, ry - h, fx, fy - h]).fill({ color: 0xa9a399 });
       g.poly([tx, ty - h, rx, ry - h, fx, fy - h, lx, ly - h]).fill({ color: 0xe6e1d8 });
@@ -323,7 +342,7 @@ export class Scene {
       const cx = x + 0.5, cy = y + 0.5;
       const n = [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dy]) => joins(x + dx, y + dy));
       // draw back-to-front so the near panel overlaps the far one
-      for (const [dx, dy] of n.sort((a, b) => a[0] + a[1] - (b[0] + b[1]))) panel(cx, cy, cx + dx * 0.5, cy + dy * 0.5);
+      for (const [dx, dy] of n.sort((a, b) => towardsCamera(a[0], a[1]) - towardsCamera(b[0], b[1]))) panel(cx, cy, cx + dx * 0.5, cy + dy * 0.5);
       if (!n.length) panel(cx - 0.3, cy, cx + 0.3, cy);
     }
   }
@@ -334,12 +353,13 @@ export class Scene {
     const m = MODULES[b.kind];
     const c = new Container();
     if (m.sprite) {
-      const name = `${m.sprite}_${m.rotatable ? b.rot : 0}`;
+      const name = `${m.sprite}_${m.rotatable ? vface(b.rot) : 0}`;
       const sp = this.makeSprite(name);
-      sp.position.set(isoX(b.x, b.y), isoY(b.x, b.y));
+      const o = footprintView(b.x, b.y, b.w, b.h);
+      sp.position.set(isoX(o.ox, o.oy), isoY(o.ox, o.oy));
       c.addChild(sp);
     }
-    let z = b.x + b.y + b.w + b.h;
+    const z = footprintView(b.x, b.y, b.w, b.h).far;
     if (!c.children.length) return null;
     c.zIndex = z;
     return c;
@@ -350,7 +370,7 @@ export class Scene {
     for (const b of s.buildings) {
       const key = b.id;
       live.add(key);
-      const tag = `${b.kind}:${b.x}:${b.y}:${b.rot}:${b.link ?? 0}`;
+      const tag = `${b.kind}:${b.x}:${b.y}:${b.rot}:${b.link ?? 0}:${view.k}`;
       const cur = this.buildingSprites.get(key);
       if (cur && cur.label === tag) continue;
       if (cur) { cur.destroy({ children: true }); this.buildingSprites.delete(key); }
@@ -371,7 +391,7 @@ export class Scene {
       if (!this.aircraftReady(type)) continue;
       live.add(f.id);
       let c = this.aircraftSprites.get(f.id);
-      const key = `ac_${type}_${f.facing}`;
+      const key = `ac_${type}_${vface(f.facing)}`;
       if (!c || c.label !== key) {
         c?.destroy({ children: true });
         c = new Container();
@@ -401,19 +421,20 @@ export class Scene {
         else ch.position.set(0, -lift);
       }
       c.alpha = f.phase === 'approach' ? Math.min(1, 1.4 - f.alt / 9) : f.phase === 'takeoff' ? Math.max(0, 1 - f.alt / 10) : 1;
-      c.zIndex = f.x + f.y + (f.alt > 0.5 ? 400 : 1.5);
+      c.zIndex = depth(f.x, f.y) + (f.alt > 0.5 ? 400 : 1.5);
     }
     for (const [id, c] of this.aircraftSprites) if (!live.has(id)) { c.destroy({ children: true }); this.aircraftSprites.delete(id); }
   }
 
   private syncPax(s: GameState, dtReal: number): void {
+    const walkTiles = s.skywalks?.length ? getLayout(s).walk : null;
     this.walkClock += dtReal;
     const step = Math.floor(this.walkClock * 6) % 2;
     const live = new Set<number>();
     for (const p of s.pax) {
       live.add(p.id);
       const moving = p.state.startsWith('to') || p.state === 'boarding' || p.state === 'queue';
-      const key = `pax_${p.color}_${p.facing}_${moving ? (step + (p.id % 2)) % 2 : 0}`;
+      const key = `pax_${p.color}_${vface(p.facing)}_${moving ? (step + (p.id % 2)) % 2 : 0}`;
       let sp = this.paxSprites.get(p.id);
       if (!sp) {
         sp = this.makeSprite(key);
@@ -422,8 +443,10 @@ export class Scene {
       }
       const tex = this.textures.get(key);
       if (tex && sp.texture !== tex) sp.texture = tex;
-      sp.position.set(isoX(p.x, p.y), isoY(p.x, p.y));
-      sp.zIndex = p.x + p.y + 0.6;
+      // on a skywalk, passengers walk on the raised deck
+      const up = walkTiles?.[Math.floor(p.y) * s.W + Math.floor(p.x)] ? SKYWALK_Z * ZPX : 0;
+      sp.position.set(isoX(p.x, p.y), isoY(p.x, p.y) - up);
+      sp.zIndex = depth(p.x, p.y) + (up ? 1.05 : 0.6);
       sp.tint = p.state === 'lost' ? 0xff8080 : 0xffffff;
     }
     for (const [id, sp] of this.paxSprites) if (!live.has(id)) { sp.destroy(); this.paxSprites.delete(id); }
@@ -452,8 +475,9 @@ export class Scene {
       for (let y = ghost.y; y < ghost.y + h; y++) for (let x = ghost.x; x < ghost.x + w; x++) this.diamond(g, x, y, ghost.ok ? 0x4ade9b : 0xf2637a, 0.38);
       const m = MODULES[ghost.kind];
       if (m.sprite) {
-        const sp = this.makeSprite(`${m.sprite}_${m.rotatable ? ghost.rot : 0}`);
-        sp.position.set(isoX(ghost.x, ghost.y), isoY(ghost.x, ghost.y));
+        const sp = this.makeSprite(`${m.sprite}_${m.rotatable ? vface(ghost.rot) : 0}`);
+        const o = footprintView(ghost.x, ghost.y, w, h);
+        sp.position.set(isoX(o.ox, o.oy), isoY(o.ox, o.oy));
         sp.alpha = 0.7;
         if (!ghost.ok) sp.tint = 0xff9090;
         this.overlay.addChild(sp);
@@ -537,7 +561,56 @@ export class Scene {
     }
   }
 
+  /**
+   * Skywalks: a raised deck with glass sides over grass, apron or taxiway. Each
+   * tile is its own drawing so aircraft passing underneath sort correctly.
+   */
+  private syncSkywalks(s: GameState): void {
+    const list = s.skywalks ?? [];
+    const key = `${list.length}:${list[0] ?? 0}:${list[list.length - 1] ?? 0}:${view.k}:${s.tiles.length}`;
+    if (key === this.skywalkKey) return;
+    this.skywalkKey = key;
+    for (const g of this.skywalkGfx.values()) g.destroy();
+    this.skywalkGfx.clear();
+    const walk = getLayout(s).walk;
+    const linked = (x: number, y: number) => x >= 0 && y >= 0 && x < s.W && y < s.H && (walk[y * s.W + x] === 1 || s.tiles[y * s.W + x] === T.Floor);
+    for (const i of list) {
+      const x = i % s.W, y = (i - x) / s.W;
+      const g = new Graphics();
+      const z0 = SKYWALK_Z * ZPX, zt = z0 + 0.1 * ZPX, zg = z0 + 0.62 * ZPX;
+      const [vx, vy] = toView(x, y);
+      const P = (a: number, b: number, z: number) => [vX(vx + a, vy + b), vY(vx + a, vy + b) - z];
+      // support pillar under the middle
+      g.poly([...P(0.42, 0.58, 0), ...P(0.58, 0.58, 0), ...P(0.58, 0.58, z0), ...P(0.42, 0.58, z0)]).fill({ color: 0x9aa5b5 });
+      // far glass walls, deck, then near glass walls
+      const sides: [number, number, number, number, number, number][] = [[0, -1, 0, 0, 1, 0], [-1, 0, 0, 0, 0, 1], [0, 1, 0, 1, 1, 1], [1, 0, 1, 0, 1, 1]];
+      const glass = (a0: number, b0: number, a1: number, b1: number) => g.poly([...P(a0, b0, zt), ...P(a1, b1, zt), ...P(a1, b1, zg), ...P(a0, b0, zg)]).fill({ color: 0xbfe3f5, alpha: 0.45 }).stroke({ color: 0xffffff, width: 0.6, alpha: 0.8 });
+      const open = sides.map(([dx, dy, ...r]) => ({ dx, dy, r, link: linked(x + dx, y + dy) }));
+      const towards = (dx: number, dy: number) => { const [a, b] = dirToView(dx, dy); return a + b; };
+      for (const e of open) if (!e.link && towards(e.dx, e.dy) < 0) { const [vdx, vdy] = dirToView(e.dx, e.dy); glass(...edgeInView(vdx, vdy)); }
+      g.poly([...P(0, 0, zt), ...P(1, 0, zt), ...P(1, 1, zt), ...P(0, 1, zt)]).fill({ color: 0xdedad2 });
+      g.poly([...P(0, 1, z0), ...P(1, 1, z0), ...P(1, 1, zt), ...P(0, 1, zt)]).fill({ color: 0x8f97a3 });
+      g.poly([...P(1, 0, z0), ...P(1, 1, z0), ...P(1, 1, zt), ...P(1, 0, zt)]).fill({ color: 0x7a838f });
+      for (const e of open) if (!e.link && towards(e.dx, e.dy) > 0) { const [vdx, vdy] = dirToView(e.dx, e.dy); glass(...edgeInView(vdx, vdy)); }
+      g.zIndex = depth(x + 0.5, y + 0.5) + 1.0;
+      this.objects.addChild(g);
+      this.skywalkGfx.set(i, g);
+    }
+  }
+
+  /** Turn the camera a quarter (+1 clockwise, -1 anticlockwise), keeping the same spot in the middle of the screen. */
+  rotateView(s: GameState, step: 1 | -1): void {
+    const w = this.app.screen.width, h = this.app.screen.height;
+    const [gx, gy] = this.toGrid(w / 2, h / 2);
+    view.W = s.W; view.H = s.H;
+    view.k = ((view.k + step + 4) % 4) as 0 | 1 | 2 | 3;
+    this.groundStamp = -1;
+    this.life.resetView();
+    this.centerOn(gx, gy);
+  }
+
   render(s: GameState, groundStamp: number, dtReal: number, ghost: Ghost | null, hover: [number, number] | null, selected: Building | null): void {
+    view.W = s.W; view.H = s.H;
     this.drawHeat(s, dtReal);
     if (groundStamp !== this.groundStamp) {
       this.groundStamp = groundStamp;
@@ -546,17 +619,18 @@ export class Scene {
     this.syncBuildings(s);
     this.syncAircraft(s);
     this.life.update(s, dtReal);
+    this.syncSkywalks(s);
     this.syncPax(s, dtReal);
     this.drawOverlay(s, ghost, hover, selected);
     this.placeLabels();
     this.top.position.copyFrom(this.world.position);
     this.top.scale.copyFrom(this.world.scale);
-    this.lights.update(s, groundStamp, this.app.screen.width, this.app.screen.height, this.life.traffic);
+    this.lights.update(s, groundStamp * 4 + view.k, this.app.screen.width, this.app.screen.height, this.life.traffic);
   }
 
   /** Thumbnail URL of a module's sprite for the build menu. */
   static thumb(kind: ModuleKind): string | null {
     const m = MODULES[kind];
-    return m.sprite ? `${import.meta.env.BASE_URL}sprites/${m.sprite}_0.png` : null;
+    return m.sprite ? `${import.meta.env.BASE_URL}sprites/${m.sprite}_0.webp` : null;
   }
 }

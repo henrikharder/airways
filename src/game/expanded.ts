@@ -22,6 +22,8 @@ export function buildExpanded(s: GameState): string[] {
 
   // airfield
   put('runway', 20, 10);
+  put('runway', 20, 2); // parallel runway to the north; its links cross the main runway
+  for (const x of [22, 82]) paintRect(s, 'taxiway', x, 7, x + 1, 9);
   put('tower', 92, 22);
   paintRect(s, 'taxiway', 20, 17, 85, 18); // parallel taxiway
   for (const x of [22, 50, 82]) paintRect(s, 'taxiway', x, 15, x + 1, 16); // runway exits
@@ -46,6 +48,7 @@ export function buildExpanded(s: GameState): string[] {
   paintRect(s, 'floor', 8, 52, 105, 79);
   for (const x of [15, 33, 48, 61, 72, 83, 93, 101]) put('gate', x, 52);
   put('busgate', 24, 52);
+  put('egates', 8, 55); put('egates', 89, 56);
   // west gates for non-Schengen flights (UK, Ireland, Gulf, Turkey), east gates Schengen
   for (const b of s.buildings) {
     if (b.kind !== 'gate') continue;
@@ -54,6 +57,8 @@ export function buildExpanded(s: GameState): string[] {
   put('transfer', 8, 58); put('toilets', 12, 57); put('passport', 19, 57); put('food', 24, 57); put('toilets', 29, 57); put('passport', 33, 57); put('shop', 38, 57);
   put('seats', 43, 58); put('seats', 46, 58); put('shop', 52, 57); put('passport', 57, 57); put('food', 62, 57);
   put('toilets', 67, 57); put('passport', 70, 57); put('shop', 74, 57); put('transfer', 78, 58); put('seats', 84, 58); put('seats', 87, 58); put('food', 94, 57); put('lounge', 98, 57);
+  // passport halls split by direction (e-gates serve both)
+  for (const pb of s.buildings) if (pb.kind === 'passport') pb.flow = pb.x === 19 || pb.x === 70 ? 'in' : 'out';
   for (const x of [41, 44, 47, 50, 53, 56, 59, 62]) put('security', x, 62);
   paintRect(s, 'barrier', 8, 63, 105, 63);
   put('exit', 20, 63);

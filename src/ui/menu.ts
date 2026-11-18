@@ -56,6 +56,7 @@ export function pauseMenu(page: 'main' | 'save' | 'load' | 'settings', settings:
       <button class="btn" data-act="menu" data-page="load">Load game</button>
       <button class="btn" data-act="menu" data-page="settings">Settings</button>
       <button class="btn danger" data-act="new">New airport</button>
+      <a class="btn" href="https://github.com/henrikharder/airways/issues/new?template=feedback.md" target="_blank" rel="noopener">Send feedback</a>
     </div>
     <p class="small muted">Esc opens and closes this menu. The game autosaves every day.</p></div>`;
 }

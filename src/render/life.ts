@@ -7,7 +7,7 @@ import { drivable, getLayout, idx, localPoint, standPoints } from '../game/grid'
 import { aircraftPath, simplify } from '../game/paths';
 import type { GameState } from '../game/types';
 import { readyAt, T } from '../game/types';
-import { AC_SIZE, isoX, isoY, ZPX } from './iso';
+import { AC_SIZE, depth, FACING, isoX, isoY, toView, towardsCamera, vface, view, vX, vY, ZPX } from './iso';
 
 type Frame = { w: number; h: number; ax: number; ay: number; scale: number };
 
@@ -24,6 +24,12 @@ export interface SpriteKit {
 export const CARPARK_ROWS: [number, number, 1 | 3][] = [[0.15, 1.15, 3], [2.45, 3.45, 1], [3.45, 4.45, 3]];
 const CAR_COLORS = [0xf8fafc, 0xcbd5e1, 0x475569, 0x1f2937, 0xdc2626, 0x2563eb, 0x0f766e, 0xd6c7a1, 0x7c2d12];
 const hash01 = (a: number, b: number) => { const v = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453; return v - Math.floor(v); };
+/** A grid rectangle as a view-space rectangle [x0, y0, x1, y1]. */
+function viewRect(x0: number, y0: number, x1: number, y1: number): [number, number, number, number] {
+  const a = toView(x0, y0), b = toView(x1, y1);
+  return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])];
+}
+
 const facingOf = (dx: number, dy: number) => (Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 0 : 2) : dy > 0 ? 1 : 3);
 
 interface Traffic { sp: Sprite; x: number; y: number; dir: 1 | -1; speed: number; len: number }
@@ -37,6 +43,19 @@ export class GroundLife {
   private shuttles = new Map<string, { sp: Sprite; base: string; path: [number, number][]; i: number; dir: 1 | -1; x: number; y: number; retiring: boolean }>();
 
   constructor(private kit: SpriteKit) {}
+
+  /** After the view turns: drop everything visual; it rebuilds facing the new way. */
+  resetView(): void {
+    for (const t of this.traffic) t.sp.destroy();
+    this.traffic = [];
+    for (const v of this.vehicles.values()) v.sp.destroy();
+    this.vehicles.clear();
+    for (const sp of this.parked.values()) sp.destroy();
+    this.parked.clear();
+    for (const t of this.shuttles.values()) t.sp.destroy();
+    this.shuttles.clear();
+    for (const st of this.bridges.values()) st.drawn = '';
+  }
 
   update(s: GameState, dtReal: number): void {
     this.syncService(s, dtReal);
@@ -79,6 +98,13 @@ export class GroundLife {
       const raw = aircraftPath(s, best[0], best[1], ex, ey);
       if (!raw) continue;
       const path = simplify(raw);
+      if (j.base === 'bus') {
+        // round the stand edge, clear of the wing, to park beside the front door for the stairs
+        const m = MODULES[st.kind];
+        const [Lt, , D] = AC_SIZE[spriteType(j.f.typeId)] ?? AC_SIZE.A20N;
+        const doorY = m.h / 2 + Lt / 2 - 1.3 * D;
+        for (const [lx, ly] of [[m.w / 2, 0.4], [m.w - 0.6, 0.4], [m.w - 0.6, doorY], [m.w / 2 + D / 2 + 1.0, doorY]] as [number, number][]) path.push(localPoint(st, lx, ly));
+      }
       const sp = this.kit.make(`${j.base}_0`);
       this.kit.layer.addChild(sp);
       this.shuttles.set(j.key, { sp, base: j.base, path, i: 1, dir: 1, x: path[0][0], y: path[0][1], retiring: false });
@@ -94,7 +120,7 @@ export class GroundLife {
       while (step > 0) {
         const [tx, ty] = t.path[t.i];
         const dx = tx - t.x, dy = ty - t.y, d = Math.hypot(dx, dy);
-        if (d > 1e-3) this.setFrame(t.sp, `${t.base}_${facingOf(dx, dy)}`);
+        if (d > 1e-3) this.setFrame(t.sp, `${t.base}_${vface(facingOf(dx, dy))}`);
         if (d > step) { t.x += (dx / d) * step; t.y += (dy / d) * step; step = 0; break; }
         t.x = tx; t.y = ty; step -= d;
         const next = t.i + t.dir;
@@ -108,7 +134,7 @@ export class GroundLife {
       }
       if (step === -1) { t.sp.destroy(); this.shuttles.delete(key); continue; }
       t.sp.position.set(isoX(t.x, t.y), isoY(t.x, t.y));
-      t.sp.zIndex = t.x + t.y + 1.2;
+      t.sp.zIndex = depth(t.x, t.y) + 1.2;
     }
   }
 
@@ -126,7 +152,7 @@ export class GroundLife {
       const fwd = [ly[0] - o[0], ly[1] - o[1]];
       const side = [o[0] - lx[0], o[1] - lx[1]];
       const at = (u: number, v: number): [number, number] => [f.x + side[0] * u + fwd[0] * v, f.y + side[1] * u + fwd[1] * v];
-      const face = (du: number, dv: number) => facingOf(side[0] * du + fwd[0] * dv, side[1] * du + fwd[1] * dv);
+      const face = (du: number, dv: number) => vface(facingOf(side[0] * du + fwd[0] * dv, side[1] * du + fwd[1] * dv));
       const put = (name: string, sprite: string, u: number, v: number) => {
         const [x, y] = at(u, v);
         want.set(`${f.id}:${name}`, { sprite, x, y });
@@ -179,9 +205,12 @@ export class GroundLife {
       }
       if (this.moveVehicle(v, step, null)) { v.sp.destroy(); this.vehicles.delete(key); }
     }
-    for (const v of this.vehicles.values()) {
+    const byId = new Map(s.flights.map((f) => [f.id, f]));
+    for (const [key, v] of this.vehicles) {
       v.sp.position.set(isoX(v.x, v.y), isoY(v.x, v.y));
-      v.sp.zIndex = v.x + v.y + 0.2;
+      v.sp.zIndex = depth(v.x, v.y) + 0.2;
+      const f = byId.get(Number(key.split(':')[0]));
+      if (f && (f.phase === 'parked' || f.phase === 'pushback')) v.sp.zIndex = this.besideAircraft(f, v.x, v.y) ?? v.sp.zIndex;
     }
   }
 
@@ -218,7 +247,7 @@ export class GroundLife {
       const v = Math.max(0, Math.min(t.speed, (gap - 0.5) * 2));
       t.x += t.dir * v * dtReal;
       t.sp.position.set(isoX(t.x, t.y), isoY(t.x, t.y));
-      t.sp.zIndex = t.x + t.y + 0.3;
+      t.sp.zIndex = depth(t.x, t.y) + 0.3;
     }
     this.traffic = this.traffic.filter((t) => {
       const out = t.x < -4 || t.x > s.W + 4;
@@ -237,11 +266,11 @@ export class GroundLife {
           const key = `${b.id}:${i}`;
           want.add(key);
           if (this.parked.has(key)) continue;
-          const sp = this.kit.make(`car_${facing}`);
+          const sp = this.kit.make(`car_${vface(facing)}`);
           sp.tint = CAR_COLORS[Math.floor(hash01(b.id, i) * CAR_COLORS.length)];
           const x = b.x + 0.5 + k * 0.5, y = b.y + (y0 + y1) / 2;
           sp.position.set(isoX(x, y), isoY(x, y));
-          sp.zIndex = x + y + 0.2;
+          sp.zIndex = depth(x, y) + 0.2;
           this.kit.layer.addChild(sp);
           this.parked.set(key, sp);
         }
@@ -250,13 +279,31 @@ export class GroundLife {
     for (const [key, sp] of this.parked) if (!want.has(key)) { sp.destroy(); this.parked.delete(key); }
   }
 
+  /**
+   * Depth for a vehicle close to a parked aircraft: under a wing or on the far
+   * side of the fuselage it belongs behind the aircraft, otherwise in front.
+   * Null when it is clear of the aircraft and plain depth sorting works.
+   */
+  private besideAircraft(f: { x: number; y: number; facing: 0 | 1 | 2 | 3; typeId: string }, x: number, y: number): number | null {
+    const [L, span] = AC_SIZE[spriteType(f.typeId)] ?? AC_SIZE.A20N;
+    const [fx, fy] = FACING[f.facing];
+    const rx = -fy, ry = fx; // right wing
+    const dx = x - f.x, dy = y - f.y;
+    const along = dx * fx + dy * fy, lateral = dx * rx + dy * ry;
+    if (Math.abs(along) > L / 2 + 0.5 || Math.abs(lateral) > span / 2 + 0.3) return null;
+    const plane = depth(f.x, f.y) + 1.5; // the aircraft's own depth
+    const underWing = along > -L * 0.3 && along < L * 0.12 && Math.abs(lateral) > 0.6;
+    const farSide = lateral * towardsCamera(rx, ry) < 0; // the side facing away from the camera
+    return underWing || farSide ? plane - 0.1 : plane + 0.1;
+  }
+
   /** Advance a vehicle along its path; true when it reached the end. */
   private moveVehicle(v: Vehicle, step: number, parked: string | null): boolean {
     while (step > 0 && v.i < v.path.length) {
       const [tx, ty] = v.path[v.i];
       const dx = tx - v.x, dy = ty - v.y;
       const d = Math.hypot(dx, dy);
-      if (d > 1e-3) this.setFrame(v.sp, `${v.base}_${facingOf(dx, dy)}`);
+      if (d > 1e-3) this.setFrame(v.sp, `${v.base}_${vface(facingOf(dx, dy))}`);
       if (d <= step) { v.x = tx; v.y = ty; v.i++; step -= d; }
       else { v.x += (dx / d) * step; v.y += (dy / d) * step; step = 0; }
     }
@@ -305,7 +352,7 @@ export class GroundLife {
       }
       const step = 1.2 * dtReal; // tiles per real second
       st.len += Math.max(-step, Math.min(step, want - st.len));
-      const key = `${b.x}:${b.y}:${b.rot}:${st.len.toFixed(3)}`;
+      const key = `${b.x}:${b.y}:${b.rot}:${st.len.toFixed(3)}:${view.k}`;
       if (key === st.drawn) continue;
       st.drawn = key;
       const P = (lx: number, ly: number) => localPoint(b, lx, ly);
@@ -314,8 +361,8 @@ export class GroundLife {
       const a = P(0, 0), bx = P(1, 0);
       const dx = a[0] - bx[0], dy = a[1] - bx[1];
       const cabFacing = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 0 : 2) : dy > 0 ? 1 : 3;
-      st.cab.texture = this.kit.textures.get(`jbcab_${cabFacing}`) ?? st.cab.texture;
-      const cf = this.kit.frames[`jbcab_${cabFacing}`];
+      st.cab.texture = this.kit.textures.get(`jbcab_${vface(cabFacing)}`) ?? st.cab.texture;
+      const cf = this.kit.frames[`jbcab_${vface(cabFacing)}`];
       if (cf) st.cab.anchor.set(cf.ax / cf.w, cf.ay / cf.h);
       const cabAt = P(lineX - 0.45, endY);
       const rotAt = P(lineX, start);
@@ -343,29 +390,31 @@ export class GroundLife {
         this.tunnelBox(g, x0, gy0, x1, gy1, z0, z1);
       }
       // paint order inside the bridge: whichever end is nearer the camera goes last
-      const nearCab = cabAt[0] + cabAt[1] > rotAt[0] + rotAt[1];
+      const nearCab = depth(...cabAt) > depth(...rotAt);
       st.c.setChildIndex(st.rot, nearCab ? 0 : 2);
       st.c.setChildIndex(st.g, 1);
       st.c.setChildIndex(st.cab, nearCab ? 2 : 0);
       // in front of or behind the parked aircraft depending on which side faces the camera
       const side = P(1, 0), o = P(0, 0);
-      const towardsCamera = side[0] - o[0] + side[1] - o[1] > 0;
+      const nearSide = towardsCamera(side[0] - o[0], side[1] - o[1]) > 0;
       const park = P(m.w / 2, m.h / 2);
-      st.c.zIndex = park[0] + park[1] + 1.5 + (towardsCamera ? 0.1 : -0.1);
+      st.c.zIndex = depth(...park) + 1.5 + (nearSide ? 0.1 : -0.1);
     }
     for (const [id, st] of this.bridges) if (!live.has(id)) { st.c.destroy({ children: true }); this.bridges.delete(id); }
   }
 
   /** Soft ground shadow of a raised box, cast with the same sun as the Blender renders. */
-  private shadowBox(g: Graphics, x0: number, y0: number, x1: number, y1: number, z: number): void {
-    const sx = 0.24 * z, sy = -0.66 * z; // ground offset per tile of height
-    const pts = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].flatMap(([x, y]) => [isoX(x + sx, y + sy), isoY(x + sx, y + sy)]);
+  private shadowBox(g: Graphics, gx0: number, gy0: number, gx1: number, gy1: number, z: number): void {
+    const [x0, y0, x1, y1] = viewRect(gx0, gy0, gx1, gy1);
+    const sx = 0.24 * z, sy = -0.66 * z; // ground offset per tile of height (the sun is fixed to the camera)
+    const pts = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].flatMap(([x, y]) => [vX(x + sx, y + sy), vY(x + sx, y + sy)]);
     g.poly(pts).fill({ color: 0x1b2430, alpha: 0.18 });
   }
 
   /** Axis-aligned box drawn as its three camera-facing faces, lit like the sprites. */
-  private tunnelBox(g: Graphics, x0: number, y0: number, x1: number, y1: number, z0: number, z1: number): void {
-    const p = (x: number, y: number, z: number) => [isoX(x, y), isoY(x, y) - z * ZPX];
+  private tunnelBox(g: Graphics, gx0: number, gy0: number, gx1: number, gy1: number, z0: number, z1: number): void {
+    const [x0, y0, x1, y1] = viewRect(gx0, gy0, gx1, gy1);
+    const p = (x: number, y: number, z: number) => [vX(x, y), vY(x, y) - z * ZPX];
     const face = (pts: number[][], color: number) => g.poly(pts.flat()).fill({ color });
     // +y face (lit), +x face (shade), top
     face([p(x0, y1, z0), p(x1, y1, z0), p(x1, y1, z1), p(x0, y1, z1)], 0xd3dbe5);

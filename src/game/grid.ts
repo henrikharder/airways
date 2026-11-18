@@ -14,6 +14,7 @@ export interface Layout {
   version: number;
   occ: Int32Array; // building id per tile, 0 = free
   byId: Map<number, Building>;
+  walk: Uint8Array; // 1 where a skywalk runs
 }
 
 let layout: Layout | null = null;
@@ -33,7 +34,9 @@ export function getLayout(s: GameState): Layout {
     if (b.kind === 'runway') continue; // runway tiles are marked by tile type
     for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) if (inside(s, x, y)) occ[idx(s, x, y)] = b.id;
   }
-  layout = { version: layoutVersion, occ, byId };
+  const walk = new Uint8Array(s.W * s.H);
+  for (const i of s.skywalks ?? []) walk[i] = 1;
+  layout = { version: layoutVersion, occ, byId, walk };
   return layout;
 }
 
@@ -142,7 +145,7 @@ export function checkPlace(s: GameState, kind: ModuleKind, x: number, y: number,
     }
     if (!apron) return { ok: false, reason: 'Must touch apron or taxiway (for the baggage trains)', cost: spec.cost };
   }
-  if (kind === 'runway' && s.buildings.some((b) => b.kind === 'runway')) return { ok: false, reason: 'One runway is enough for now', cost: spec.cost };
+  if (kind === 'runway' && s.buildings.filter((b) => b.kind === 'runway').length >= 2) return { ok: false, reason: 'Two runways is the most this site can take', cost: spec.cost };
   return { ok: true, cost: spec.cost };
 }
 
@@ -172,6 +175,7 @@ export function paintCheck(s: GameState, paint: PaintKind, x: number, y: number)
   if (o && getLayout(s).byId.get(o)?.kind !== 'tree') return false;
   if (paint === 'floor') return t === T.Grass;
   if (paint === 'barrier') return t === T.Floor && !o;
+  if (paint === 'skywalk') return !o && !getLayout(s).walk[idx(s, x, y)] && (t === T.Grass || t === T.Apron || t === T.Taxiway);
   return t === T.Grass || t === T.Apron || t === T.Taxiway;
 }
 
@@ -183,6 +187,16 @@ export function paintRect(s: GameState, paint: PaintKind, x0: number, y0: number
   const cleared = new Set<number>();
   for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++) {
     for (let x = Math.min(x0, x1); x <= Math.max(x0, x1); x++) {
+      if (paint === 'skywalk') {
+        // an overlay: the ground underneath keeps its type, so aircraft still taxi under it
+        if (!paintCheck(s, paint, x, y) || s.cash < cost) continue;
+        (s.skywalks ??= []).push(idx(s, x, y));
+        getLayout(s).walk[idx(s, x, y)] = 1;
+        s.cash -= cost;
+        s.today.construction += cost;
+        n++;
+        continue;
+      }
       if (!paintCheck(s, paint, x, y) || s.tiles[idx(s, x, y)] === target || s.cash < cost) continue;
       const o = getLayout(s).occ[idx(s, x, y)];
       if (o) cleared.add(o); // a tree
@@ -201,7 +215,12 @@ export function bulldozeAt(s: GameState, x: number, y: number): string | null {
   if (!inside(s, x, y)) return null;
   const L = getLayout(s);
   let id = L.occ[idx(s, x, y)];
-  if (!id && s.tiles[idx(s, x, y)] === T.Runway) id = s.buildings.find((b) => b.kind === 'runway')?.id ?? 0;
+  if (!id && s.tiles[idx(s, x, y)] === T.Runway) id = s.buildings.find((b) => b.kind === 'runway' && x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h)?.id ?? 0;
+  if (!id && L.walk[idx(s, x, y)]) {
+    s.skywalks = (s.skywalks ?? []).filter((i) => i !== idx(s, x, y));
+    invalidate();
+    return 'Skywalk removed';
+  }
   if (id) {
     const b = L.byId.get(id)!;
     if (b.kind.startsWith('stand_') && s.flights.some((f) => f.stand === b.id && f.phase !== 'scheduled' && f.phase !== 'departed' && f.phase !== 'cancelled')) return 'An aircraft is using this stand';
@@ -252,8 +271,11 @@ export function linkGates(s: GameState): void {
 
 /** Walkable for passengers: terminal floor not covered by a module. Arriving passengers may also pass through arrivals exits. */
 export function walkable(s: GameState, x: number, y: number, arriving = false): boolean {
+  if (!inside(s, x, y)) return false;
+  const L = getLayout(s);
+  if (L.walk[idx(s, x, y)]) return true; // skywalk
   if (tileAt(s, x, y) !== T.Floor) return false;
-  const o = getLayout(s).occ[idx(s, x, y)];
+  const o = L.occ[idx(s, x, y)];
   return !o || (arriving && getLayout(s).byId.get(o)?.kind === 'exit');
 }
 

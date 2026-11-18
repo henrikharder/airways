@@ -19,6 +19,7 @@ import airplane from '@phosphor-icons/core/assets/fill/airplane-fill.svg?raw';
 import landing from '@phosphor-icons/core/assets/fill/airplane-landing-fill.svg?raw';
 import takeoff from '@phosphor-icons/core/assets/fill/airplane-takeoff-fill.svg?raw';
 import rotate from '@phosphor-icons/core/assets/fill/arrow-clockwise-fill.svg?raw';
+import rotateBack from '@phosphor-icons/core/assets/fill/arrow-counter-clockwise-fill.svg?raw';
 import path from '@phosphor-icons/core/assets/fill/path-fill.svg?raw';
 import scan from '@phosphor-icons/core/assets/fill/scan-fill.svg?raw';
 import shoppingBag from '@phosphor-icons/core/assets/fill/shopping-bag-fill.svg?raw';
@@ -39,13 +40,14 @@ import wall from '@phosphor-icons/core/assets/fill/wall-fill.svg?raw';
 import signOut from '@phosphor-icons/core/assets/fill/sign-out-fill.svg?raw';
 import bus from '@phosphor-icons/core/assets/fill/bus-fill.svg?raw';
 import idCard from '@phosphor-icons/core/assets/fill/identification-card-fill.svg?raw';
+import bridge from '@phosphor-icons/core/assets/fill/bridge-fill.svg?raw';
 
 const ICONS = {
   seats: armchair, terminal: buildings, car, runway: roadHorizon, entrance: doorOpen, gauge, floor: squaresFour, info,
   board: bank, baggage: suitcase, map: mapTrifold, menu: list, select: cursor, pause, plane: airplane, landing,
-  takeoff, rotate, taxiway: path, security: scan, shop: shoppingBag, bulldoze: bulldozer, stand: airplaneTilt,
+  takeoff, rotate, rotateBack, taxiway: path, security: scan, shop: shoppingBag, bulldoze: bulldozer, stand: airplaneTilt,
   target, checkin: ticket, toilets: toilet, tower: cellTower, tree, alert: warning, trophy,
-  gate: users, food: forkKnife, wallet, close: x, barrier: wall, exit: signOut, bus, passport: idCard,
+  gate: users, food: forkKnife, wallet, close: x, barrier: wall, exit: signOut, bus, passport: idCard, bridge,
 } as const;
 
 export type IconName = keyof typeof ICONS;

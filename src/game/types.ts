@@ -6,9 +6,9 @@ export type TileType = (typeof T)[keyof typeof T];
 export type ModuleKind =
   | 'runway' | 'tower' | 'stand_s' | 'stand_m' | 'stand_l' | 'stand_xl'
   | 'entrance' | 'exit' | 'checkin' | 'security' | 'gate' | 'food' | 'shop' | 'toilets' | 'seats' | 'baggage'
-  | 'carpark' | 'tree' | 'bagsort' | 'busgate' | 'passport' | 'transfer' | 'lounge';
+  | 'carpark' | 'tree' | 'bagsort' | 'busgate' | 'passport' | 'transfer' | 'lounge' | 'egates';
 
-export type PaintKind = 'taxiway' | 'floor' | 'apron' | 'barrier';
+export type PaintKind = 'taxiway' | 'floor' | 'apron' | 'barrier' | 'skywalk';
 
 export interface Building {
   id: number;
@@ -20,6 +20,7 @@ export interface Building {
   rot: 0 | 1 | 2 | 3;
   link?: number; // gate ↔ stand
   zone?: 'swing' | 'schengen' | 'border'; // gates: which flights may use it (default swing)
+  flow?: 'both' | 'out' | 'in'; // passport control: departures, arrivals or both (default both)
 }
 
 export type Phase = 'scheduled' | 'approach' | 'landing' | 'taxi_in' | 'parking' | 'parked' | 'pushback' | 'taxi_out' | 'lineup' | 'takeoff' | 'departed' | 'cancelled';
@@ -61,6 +62,7 @@ export interface Flight {
   speed: number; // tiles per game minute
   waitUntil: number; // earliest pushback (no-show passengers' bags being offloaded)
   onStand?: number; // minute the aircraft parked
+  rwy?: number; // runway (building id) for the current landing or take-off
 }
 
 export interface Contract {
@@ -109,6 +111,7 @@ export interface Pax {
   cleared?: boolean; // through passport control (border flights only)
   transfer?: boolean; // connecting from an arriving flight
   premium?: boolean; // uses lounges
+  egate?: boolean; // eligible for automated passport gates
 }
 
 export interface Ledger {
@@ -176,6 +179,8 @@ export interface GameState {
   curfew: Curfew;
   goodwill: number; // 0..100, how the neighbours feel about the airport (night noise)
   tutorial?: { on: boolean; step: number; seen: string[] }; // guided tutorial and one-time introductions
+  scenario?: { id: string; result?: 'won' | 'lost'; shown?: boolean };
+  skywalks?: number[]; // tile indices of elevated walkways linking terminals (aircraft taxi underneath)
 }
 
 /**

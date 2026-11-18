@@ -24,6 +24,18 @@ export function runway(s: GameState): Building | undefined {
   return s.buildings.find((b) => b.kind === 'runway');
 }
 
+export function runways(s: GameState): Building[] {
+  return s.buildings.filter((b) => b.kind === 'runway');
+}
+
+/** Manhattan distance from a stand to a runway's threshold or far end, whichever is nearer. */
+function runwayDistance(rw: Building, st: Building | undefined): number {
+  if (!st) return 0;
+  const { start, end } = runwayLine(rw);
+  const cx = st.x + st.w / 2, cy = st.y + st.h / 2;
+  return Math.min(Math.abs(start[0] - cx) + Math.abs(start[1] - cy), Math.abs(end[0] - cx) + Math.abs(end[1] - cy));
+}
+
 export function hasTower(s: GameState): boolean {
   return s.buildings.some((b) => b.kind === 'tower');
 }
@@ -145,11 +157,11 @@ export function reachableStands(s: GameState): Set<number> {
   if (reachStamp === layoutStamp()) return reachable;
   reachStamp = layoutStamp();
   reachable = new Set();
-  const rw = runway(s);
-  if (!rw) return reachable;
+  const rws = runways(s);
+  if (!rws.length) return reachable;
   const seen = new Uint8Array(s.W * s.H);
   const q: number[] = [];
-  for (let y = rw.y; y < rw.y + rw.h; y++) for (let x = rw.x; x < rw.x + rw.w; x++) { seen[idx(s, x, y)] = 1; q.push(idx(s, x, y)); }
+  for (const rw of rws) for (let y = rw.y; y < rw.y + rw.h; y++) for (let x = rw.x; x < rw.x + rw.w; x++) { seen[idx(s, x, y)] = 1; q.push(idx(s, x, y)); }
   while (q.length) {
     const i = q.pop()!;
     const x = i % s.W, y = (i - x) / s.W;
@@ -191,9 +203,11 @@ export function gateOf(s: GameState, f: Flight): Building | undefined {
 
 // ---------- aircraft motion ----------
 
-// When the runway is next free, per game (a module-level value would leak into the next game).
-const runwayFree = new WeakMap<GameState, number>();
-const freeAt = (s: GameState) => runwayFree.get(s) ?? 0;
+// When each runway is next free, per game (a module-level value would leak into the next game).
+const runwayFree = new WeakMap<GameState, Map<number, number>>();
+const freeMap = (s: GameState) => { let m = runwayFree.get(s); if (!m) { m = new Map(); runwayFree.set(s, m); } return m; };
+const freeAt = (s: GameState, rw: Building) => freeMap(s).get(rw.id) ?? 0;
+const occupy = (s: GameState, rw: Building, until: number) => freeMap(s).set(rw.id, until);
 
 const GROUND: Flight['phase'][] = ['taxi_in', 'taxi_out', 'pushback', 'lineup', 'parking', 'landing'];
 const HALF_LEN: Record<string, number> = { s: 2.6, m: 3.8, l: 6.2, xl: 7.4 };
@@ -270,7 +284,8 @@ function facingTo(dx: number, dy: number): 0 | 1 | 2 | 3 {
 /** Advance one aircraft by dt game minutes. */
 export function updateFlight(s: GameState, f: Flight, dt: number, onDepart: (f: Flight) => void, onLand: (f: Flight) => void): void {
   const now = s.minute;
-  const rw = runway(s);
+  const rws = runways(s);
+  const rw = (f.rwy !== undefined ? rws.find((r) => r.id === f.rwy) : undefined) ?? rws[0];
   const L = getLayout(s);
   switch (f.phase) {
     case 'scheduled': {
@@ -282,8 +297,12 @@ export function updateFlight(s: GameState, f: Flight, dt: number, onDepart: (f: 
         if (now > f.arr + 60) cancel(s, f, 'no free stand');
         return;
       }
-      if (now < freeAt(s) - 6) return; // hold until the runway is nearly free
-      const { start, axis } = runwayLine(rw);
+      // land on the runway that frees up first; on a tie, the one nearer the stand
+      const stand = L.byId.get(f.stand);
+      const pick = [...rws].sort((a, b) => freeAt(s, a) - freeAt(s, b) || runwayDistance(a, stand) - runwayDistance(b, stand))[0];
+      if (now < freeAt(s, pick) - 6) return; // hold until a runway is nearly free
+      f.rwy = pick.id;
+      const { start, axis } = runwayLine(pick);
       const dir: [number, number] = axis === 'x' ? [1, 0] : [0, 1];
       f.x = start[0] - dir[0] * 40;
       f.y = start[1] - dir[1] * 40;
@@ -300,7 +319,7 @@ export function updateFlight(s: GameState, f: Flight, dt: number, onDepart: (f: 
       const [tx, ty] = f.path[0];
       f.alt = Math.max(0, (9 * Math.hypot(tx - f.x, ty - f.y)) / total);
       if (done) {
-        runwayFree.set(s, now + 3);
+        occupy(s, rw!, now + 3);
         const { start, end } = runwayLine(rw!);
         const k = exitFraction(s, rw!);
         f.path = [[start[0] + (end[0] - start[0]) * k, start[1] + (end[1] - start[1]) * k]];
@@ -362,7 +381,10 @@ export function updateFlight(s: GameState, f: Flight, dt: number, onDepart: (f: 
       const done = moveAlong(f, TAXI * 0.25, dt);
       f.facing = keep; // backwards
       if (done) {
-        const { start } = runwayLine(rw!);
+        // take off from the runway nearest the stand
+        const dep = [...rws].sort((a, b) => runwayDistance(a, L.byId.get(f.stand!)) - runwayDistance(b, L.byId.get(f.stand!)))[0];
+        f.rwy = dep.id;
+        const { start } = runwayLine(dep);
         const p = aircraftPath(s, Math.floor(f.x), Math.floor(f.y), Math.floor(start[0]), Math.floor(start[1]));
         if (!p) { f.phase = 'departed'; return; }
         f.path = simplify(p);
@@ -377,8 +399,8 @@ export function updateFlight(s: GameState, f: Flight, dt: number, onDepart: (f: 
       return;
     }
     case 'lineup': {
-      if (now < freeAt(s)) return;
-      runwayFree.set(s, now + 3);
+      if (now < freeAt(s, rw!)) return;
+      occupy(s, rw!, now + 3);
       const { end, axis } = runwayLine(rw!);
       const dir: [number, number] = axis === 'x' ? [1, 0] : [0, 1];
       f.facing = axis === 'x' ? 0 : 1;

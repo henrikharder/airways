@@ -5,7 +5,7 @@ import { MODULES, FEES } from './catalog';
 import { acType } from '../data/aircraft';
 import { drawBags } from './baggage';
 import { busRate, isRemote, runBuses, takeSeat } from './buses';
-import { isBorder } from './border';
+import { flowAllows, isBorder } from './border';
 import { pickConnection, premiumShare, transferShare } from './hub';
 import { openServers } from './staff';
 import { gateOf } from './flights';
@@ -163,6 +163,7 @@ export function spawnPax(s: GameState, f: Flight, dt: number): void {
         const p = newPax(s, f, true, x + rnd(-0.3, 0.3), y + rnd(-0.3, 0.3));
         p.bags = drawBags();
         p.premium = Math.random() < premiumShare(f.airline);
+        p.egate = Math.random() < 0.55;
         if (!p.bags) { p.state = 'toSecurity'; p.stage = 'security'; } // checked in online, hand luggage only
         if (s.buildings.some((b) => b.kind === 'carpark') && Math.random() < 0.35) { s.cash += FEES.parkingPerCar; s.today.parking += FEES.parkingPerCar; }
       }
@@ -182,6 +183,7 @@ export function spawnPax(s: GameState, f: Flight, dt: number): void {
       const [x, y] = spawnPoint(gate, true);
       const p = newPax(s, f, false, x + rnd(-0.4, 0.4), y + rnd(-0.3, 0.3));
       p.bags = drawBags();
+      p.egate = Math.random() < 0.55;
       f.bagsIn += p.bags;
       p.bagAt = f.bagsIn;
       const onward = Math.random() < transferShare(s, f) ? pickConnection(s, f) : undefined;
@@ -273,7 +275,7 @@ function goTo(p: Pax, b: Building | undefined, state: Pax['state'], stage: Pax['
 
 function nextAfterSecurity(s: GameState, p: Pax, f: Flight | undefined): void {
   if (f && p.dep && !p.cleared && isBorder(s, f)) {
-    const pc = choose(s, 'passport', p);
+    const pc = choosePassport(s, p);
     if (pc && goTo(p, pc, 'toPassport', 'passport')) return;
     p.cleared = true; // no passport control to be found: they wander through (the border police will fine you)
   }
@@ -301,6 +303,18 @@ function nextAfterSecurity(s: GameState, p: Pax, f: Flight | undefined): void {
   p.state = 'atGate';
   p.target = 0;
   p.timer = s.minute + 10;
+}
+
+/** Nearest passport point for this passenger's direction: booths, or e-gates if eligible. */
+function choosePassport(s: GameState, p: Pax): Building | undefined {
+  const wrongWay = (b: Building) => !flowAllows(b, p.dep);
+  const booth = choose(s, 'passport', p, wrongWay);
+  const gate = p.egate ? choose(s, 'egates', p, wrongWay) : undefined;
+  if (!gate) return booth;
+  if (!booth) return gate;
+  // e-gates are faster, so eligible travellers prefer them unless they are much further
+  const score = (b: Building) => distanceTo(s, b, p.x, p.y, !p.dep) + queueLength(b.id) * (b.kind === 'egates' ? 1.2 : 3);
+  return score(gate) <= score(booth) + 4 ? gate : booth;
 }
 
 /** Through passport control: departing passengers carry on to the gate, arriving ones to their bags or out. */
@@ -370,7 +384,7 @@ export function updatePax(s: GameState, dt: number, flights: Map<number, Flight>
         break;
       }
       case 'toPassport': {
-        const target = b ?? choose(s, 'passport', p);
+        const target = b ?? choosePassport(s, p);
         if (!target) { p.cleared = true; afterPassport(s, p, f, onDone); break; }
         p.target = target.id;
         const r = walkTo(s, p, target, dt);
@@ -400,7 +414,7 @@ export function updatePax(s: GameState, dt: number, flights: Map<number, Flight>
           v.done.push(now);
           if (b.kind === 'transfer') {
             nextAfterSecurity(s, p, f);
-          } else if (b.kind === 'passport') {
+          } else if (b.kind === 'passport' || b.kind === 'egates') {
             p.cleared = true;
             afterPassport(s, p, f, onDone);
           } else if (b.kind === 'checkin') {

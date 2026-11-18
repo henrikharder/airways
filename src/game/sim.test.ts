@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { demoGame } from './demo';
 import { acceptOffer, held } from './flights';
-import { accessTile, bulldozeAt, checkPlace, paintRect, place, walkable } from './grid';
+import { accessTile, bulldozeAt, checkPlace, drivable, paintRect, place, walkable } from './grid';
+import { gateName } from './terminals';
+import { scenarioProgress, SCENARIOS, startScenario } from './scenarios';
 import { createGame } from './newgame';
 import { aircraftPath, distanceTo, UNREACHABLE } from './paths';
 import { securityReport } from './security';
@@ -239,5 +241,73 @@ describe('hub', () => {
     expect(transfers).toBeGreaterThan(50);
     expect(boardedTransfers).toBeGreaterThan(transfers * 0.7);
     expect(lounge).toBeGreaterThan(20);
+  });
+});
+
+describe('two runways', () => {
+  it('spreads landings and take-offs over both runways', () => {
+    const s = expandedGame();
+    expect(s.buildings.filter((b) => b.kind === 'runway')).toHaveLength(2);
+    const used = new Map<number, number>();
+    for (let m = 0; m < 20 * 60; m += 5) {
+      advance(s, 5);
+      for (const f of s.flights) if ((f.phase === 'approach' || f.phase === 'takeoff') && f.rwy !== undefined) used.set(f.rwy, (used.get(f.rwy) ?? 0) + 1);
+    }
+    expect(used.size).toBe(2);
+  });
+});
+
+describe('terminals and skywalks', () => {
+  it('names gates by terminal and lets passengers cross a skywalk over a taxiway', () => {
+    const s = createGame({ name: 'T', code: 'TST', city: 'CPH' });
+    s.cash = 50e6;
+    paintRect(s, 'floor', 10, 60, 19, 69);
+    paintRect(s, 'floor', 40, 60, 49, 69);
+    paintRect(s, 'taxiway', 25, 50, 26, 75); // a taxiway between the two terminals
+    expect(place(s, 'gate', 12, 60, 0).ok).toBe(true);
+    expect(place(s, 'gate', 42, 60, 0).ok).toBe(true);
+    const [g1, g2] = s.buildings.filter((b) => b.kind === 'gate').sort((a, b) => a.x - b.x);
+    expect(gateName(s, g1.id)).toBe('A1');
+    expect(gateName(s, g2.id)).toBe('B1');
+    expect(distanceTo(s, g2, 15.5, 66.5)).toBe(UNREACHABLE);
+    expect(paintRect(s, 'skywalk', 20, 66, 39, 66)).toBe(20);
+    expect(distanceTo(s, g2, 15.5, 66.5)).toBeLessThan(UNREACHABLE);
+    expect(drivable(s, 25, 66)).toBe(true); // aircraft still taxi underneath
+  });
+});
+
+describe('passport halls', () => {
+  it('sends departures and arrivals to the hall for their direction', () => {
+    const s = expandedGame();
+    const halls = s.buildings.filter((b) => b.kind === 'passport');
+    expect(halls.some((b) => b.flow === 'in') && halls.some((b) => b.flow === 'out')).toBe(true);
+    const seen = new Map<number, Set<boolean>>();
+    for (let m = 0; m < 12 * 60; m += 2) {
+      advance(s, 2);
+      for (const p of s.pax) {
+        if (p.state !== 'queue' && p.state !== 'service') continue;
+        const b = s.buildings.find((x) => x.id === p.target);
+        if (b?.kind !== 'passport') continue;
+        if (!seen.has(b.id)) seen.set(b.id, new Set());
+        seen.get(b.id)!.add(p.dep);
+      }
+    }
+    for (const b of halls) for (const dep of seen.get(b.id) ?? []) expect(b.flow === 'both' || (b.flow === 'out') === dep).toBe(true);
+    expect([...seen.values()].length).toBeGreaterThan(0);
+  });
+});
+
+describe('scenarios', () => {
+  it('sets up each scenario and tracks the goal', () => {
+    for (const sc of SCENARIOS) {
+      const s = createGame({ name: 'T', code: 'TST', city: 'CPH' });
+      startScenario(s, sc.id);
+      expect(s.scenario?.id).toBe(sc.id);
+      if (sc.goal) {
+        expect(s.contracts.length).toBeGreaterThan(0);
+        advance(s, 24 * 60);
+        expect(scenarioProgress(s)!.value).toBeGreaterThanOrEqual(0);
+      }
+    }
   });
 });

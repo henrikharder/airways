@@ -3,6 +3,7 @@
 import { FEES, MODULES, NIGHT } from './catalog';
 import { updateBaggage } from './baggage';
 import { borderDaily } from './border';
+import { checkScenario } from './scenarios';
 import { inNight, nightDaily, nightMovement } from './night';
 import { wagesPerDay } from './staff';
 import { weeklyMeeting } from './board';
@@ -20,6 +21,7 @@ export function upkeepPerDay(s: GameState): number {
   let n = 0;
   for (const b of s.buildings) n += MODULES[b.kind].upkeep;
   for (const t of s.tiles) n += t === T.Floor ? 6 : t === T.Taxiway ? 2 : t === T.Apron ? 1 : 0;
+  n += (s.skywalks?.length ?? 0) * 15;
   return n;
 }
 
@@ -113,6 +115,7 @@ function newDay(s: GameState, day: number): void {
   }
   nightDaily(s);
   borderDaily(s);
+  checkScenario(s);
   for (const c of s.contracts) scheduleContract(s, c, day);
   s.scheduledDay = day;
   allocateStands(s);

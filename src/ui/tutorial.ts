@@ -29,7 +29,7 @@ const has = (s: GameState, k: ModuleKind) => s.buildings.some((b) => b.kind === 
 const floorTiles = (s: GameState) => s.tiles.filter((t) => t === T.Floor || t === T.Barrier).length;
 
 const STEPS: Step[] = [
-  { title: 'Welcome to your airport', body: 'You run a brand-new airport on an empty field. Build a runway and a terminal, sign airlines, and keep every passenger moving. Drag to pan, scroll to zoom.', done: () => false },
+  { title: 'Welcome to your airport', body: 'You run a brand-new airport on an empty field. Build a runway and a terminal, sign airlines, and keep every passenger moving. Drag to pan, scroll or pinch to zoom, Q and E to turn the view.', done: () => false },
   { title: 'Build a runway', body: 'Pick the runway and place it across the top of the site. Press R to rotate it.', target: '[data-build="runway"]', show: { build: 'runway' }, done: (s) => has(s, 'runway') },
   { title: 'Add a control tower', body: 'No flights without air traffic control. Put the tower on grass anywhere.', target: '[data-build="tower"]', show: { build: 'tower' }, done: (s) => has(s, 'tower') },
   { title: 'Paint the terminal floor', body: 'Drag out a terminal building near the road at the bottom, about 20 by 15 tiles. Everything indoors goes on top of it.', target: '[data-paint="floor"]', show: { paint: 'floor' }, done: (s) => floorTiles(s) >= 60 },

@@ -81,5 +81,14 @@ Board: weekly objectives with cash bonuses and confidence (carried over).
 - **Remote stands.** A stand with no gate in reach is remote: passengers wait at a bus gate and ride apron buses (two per bus gate, 50 seats). Slower and less liked than a jet bridge, but remote stands can go anywhere on the apron.
 - **Borders.** Flights outside Schengen (or domestic) need passport control: departing passengers after security, arriving ones before baggage claim. Gates are swing, Schengen-only or non-Schengen-only, and stand allocation respects the zones. Without passport control the border police fine you daily.
 
+- **Hub play.** A transfer desk lets connecting passengers through airside (their bags are transferred too); the share grows with destinations served. Premium travellers use lounges.
+- **Passport halls.** Passport control can serve departures, arrivals or both; e-gates handle eligible travellers quickly.
+- **Two runways.** Arrivals take the runway that frees up first, departures the one nearest their stand.
+- **Terminals.** Each connected terminal floor is a terminal (T1, T2…); gates are lettered by terminal. Skywalks link terminals airside and can bridge taxiways.
+- **Scenarios.** Sandbox, a regional airport to grow, and a hub challenge, each with a goal and a deadline.
+
+## Player experience
+Guided tutorial and one-time introductions, pause menu with save slots, settings, synthesised sound, rotating view, touch controls, a feedback link.
+
 ## Later
-Transfers, lounges, separate arrival and departure passport halls with e-gates, multiple terminals and floors, rotating camera.
+Multiple floors, transfers between terminals by train, more scenarios.

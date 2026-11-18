@@ -39,6 +39,7 @@ export const MODULES: Record<ModuleKind, ModuleSpec> = {
   gate: { kind: 'gate', name: 'Gate', category: 'terminal', w: 4, h: 4, cost: 70_000, upkeep: 500, sprite: 'gate', indoor: true, rotatable: true, desc: 'Waiting seats and boarding desk. Links to the nearest stand.', capacity: 24 },
   busgate: { kind: 'busgate', name: 'Bus gate', category: 'terminal', w: 4, h: 3, cost: 60_000, upkeep: 350, sprite: 'busgate', indoor: true, rotatable: true, desc: 'Lounge for remote stands (stands with no gate in reach). Passengers ride apron buses out to the aircraft; each bus gate runs two buses.', capacity: 50 },
   passport: { kind: 'passport', name: 'Passport control', category: 'terminal', w: 3, h: 3, cost: 120_000, upkeep: 300, sprite: 'passport', indoor: true, rotatable: true, desc: 'Three booths run by the border police (no airport staff needed). Non-Schengen passengers pass here after security on the way out, and before baggage claim on the way in. Put it airside.', servers: 3, serviceMin: 0.55 },
+  egates: { kind: 'egates', name: 'E-gates', category: 'terminal', w: 3, h: 2, cost: 180_000, upkeep: 250, sprite: 'egates', indoor: true, rotatable: true, desc: 'Four automated passport gates for eligible travellers (EU/EEA and biometric passports, about 55%). Fast and unstaffed; everyone else uses the booths.', servers: 4, serviceMin: 0.3 },
   transfer: { kind: 'transfer', name: 'Transfer desk', category: 'terminal', w: 3, h: 2, cost: 140_000, upkeep: 300, sprite: 'transfer', indoor: true, rotatable: true, desc: 'Security re-check for connecting passengers, staffed by two security officers. Put it airside: without one, no airline will route connections through you.', servers: 2, serviceMin: 0.7 },
   baggage: { kind: 'baggage', name: 'Baggage claim', category: 'terminal', w: 3, h: 4, cost: 140_000, upkeep: 900, sprite: 'baggage', indoor: true, rotatable: true, desc: 'Arriving passengers wait here until their bags come round on the belt.', capacity: 60, dwell: [2, 4] },
   food: { kind: 'food', name: 'Food court', category: 'comfort', w: 4, h: 4, cost: 120_000, upkeep: 700, sprite: 'food', indoor: true, rotatable: true, desc: 'Hungry passengers eat here. Good revenue.', capacity: 20, dwell: [12, 22], spend: 16 },
@@ -55,6 +56,7 @@ export const PAINTS: Record<PaintKind, { name: string; costPerTile: number; desc
   floor: { name: 'Terminal floor', costPerTile: 1_200, desc: 'Paint the terminal building. Indoor modules go on top.' },
   taxiway: { name: 'Taxiway', costPerTile: 900, desc: 'Paint routes for aircraft between runway and stands.' },
   apron: { name: 'Apron', costPerTile: 600, desc: 'Open tarmac aircraft can drive over.' },
+  skywalk: { name: 'Skywalk', costPerTile: 2_500, desc: 'Elevated glass walkway linking terminals airside. It can bridge taxiways and aprons: aircraft taxi underneath.' },
   barrier: { name: 'Glass barrier', costPerTile: 300, desc: 'Paint on terminal floor to wall off the airside. Security lanes and arrivals exits are the only ways through.' },
 };
 
