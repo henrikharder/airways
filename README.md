@@ -29,11 +29,19 @@ npm run art                       # render everything into public/sprites
 blender --background --python art/build.py -- ac_A20N gate_   # only matching sprites
 ```
 
-`art/build.py` builds stylised low-poly models (aircraft from real dimensions),
-renders them with a fixed 2:1 isometric camera in four facings, and writes
-`src/generated/sprites.json` with each sprite's anchor so the game can place it
-on the tile grid. Aircraft get a second "livery mask" render that the game tints
-with each airline's colour.
+`art/build.py` builds detailed stylised models (aircraft from real dimensions,
+with a lofted fuselage), renders them in Cycles at 128 px per tile with a fixed
+2:1 isometric camera in four facings, and writes `src/generated/sprites.json`
+with each sprite's anchor so the game can place it on the tile grid. A shadow
+catcher bakes soft ground shadows into each sprite. Aircraft get a "livery mask"
+render that the game tints with each airline's colour, plus a separate ground
+shadow that stays on the ground while they fly. A full render takes about 8
+minutes (the first Cycles run also compiles GPU kernels).
+
+```bash
+blender --background --python art/build.py -- zoom A20N   # close-up check renders into art/debug
+blender --background --python art/build.py -- side        # side views of every aircraft
+```
 
 ## Layout
 

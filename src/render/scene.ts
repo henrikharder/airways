@@ -12,7 +12,7 @@ import { T } from '../game/types';
 export const TW = 32; // tile diamond width at zoom 1
 export const TH = 16;
 const ZPX = 20.2; // screen px per tile of height at zoom 1
-const SRC_TILE = 64; // tile width in rendered sprites (manifest scale 1)
+const SRC_TILE = 128; // tile width in rendered sprites (manifest scale 1); matches TILE_PX in art/build.py
 
 type Frame = { w: number; h: number; ax: number; ay: number; scale: number };
 const FRAMES = manifest as Record<string, Frame>;
@@ -35,6 +35,12 @@ const COLORS = {
   floorAlt: 0xe8e1d4,
   road: 0x5b616b,
   parking: 0x6a707a,
+};
+
+/** Aircraft length, span and fuselage diameter in tiles (mirrors AIRCRAFT in art/build.py). */
+const AC_SIZE: Record<string, [number, number, number]> = {
+  AT76: [5.44, 5.42, 0.56], E295: [8.3, 7.02, 0.6], A20N: [7.52, 7.16, 0.79], B38M: [7.9, 7.18, 0.75],
+  B789: [12.56, 12.02, 1.15], A359: [13.36, 12.96, 1.19], A388: [14.54, 15.96, 1.42],
 };
 
 export interface Badge { key: string; x: number; y: number; text: string; color: number }
@@ -64,6 +70,7 @@ export class Scene {
   private textures = new Map<string, Texture>();
   private buildingSprites = new Map<number, Container>();
   private aircraftSprites = new Map<number, Container>();
+  private serviceSprites = new Map<string, Sprite>();
   private paxSprites = new Map<number, Sprite>();
   private ghostSprite: Sprite | null = null;
   private groundStamp = -1;
@@ -300,10 +307,13 @@ export class Scene {
         c?.destroy({ children: true });
         c = new Container();
         c.label = key;
-        const shadow = new Graphics();
-        const fr = FRAMES[key];
-        const r = fr ? (fr.w * this.frameScale(key)) / 4.2 : 20;
-        shadow.ellipse(0, 0, r, r / 2).fill({ color: 0x1b2a1b, alpha: 0.16 });
+        let shadow: Container;
+        if (FRAMES[`${key}_shadow`]) shadow = this.makeSprite(`${key}_shadow`);
+        else {
+          const fr = FRAMES[key];
+          const r = fr ? (fr.w * this.frameScale(key)) / 4.2 : 20;
+          shadow = new Graphics().ellipse(0, 0, r, r / 2).fill({ color: 0x1b2a1b, alpha: 0.16 });
+        }
         shadow.label = 'shadow';
         const base = this.makeSprite(key);
         const mask = this.makeSprite(`${key}_mask`);
@@ -318,13 +328,66 @@ export class Scene {
       c.position.set(px, py);
       const lift = f.alt * ZPX;
       for (const ch of c.children) {
-        if (ch.label === 'shadow') ch.position.set(0, 0);
+        if (ch.label === 'shadow') { ch.position.set(0, 0); ch.alpha = Math.max(0, 1 - f.alt / 5); }
         else ch.position.set(0, -lift);
       }
       c.alpha = f.phase === 'approach' ? Math.min(1, 1.4 - f.alt / 9) : f.phase === 'takeoff' ? Math.max(0, 1 - f.alt / 10) : 1;
       c.zIndex = f.x + f.y + (f.alt > 0.5 ? 400 : 1.5);
     }
     for (const [id, c] of this.aircraftSprites) if (!live.has(id)) { c.destroy({ children: true }); this.aircraftSprites.delete(id); }
+  }
+
+  /**
+   * Turnaround life around parked aircraft: belt loader and baggage train at the
+   * forward hold, catering at the rear service door, a fuel truck by the engine,
+   * cones, ground crew, and the pushback tug near departure. Purely visual.
+   */
+  private syncService(s: GameState): void {
+    const want = new Map<string, [string, number, number]>(); // key -> sprite, x, y
+    const now = s.minute;
+    const facingOf = (dx: number, dy: number) => (Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 0 : 2) : dy > 0 ? 1 : 3);
+    for (const f of s.flights) {
+      if ((f.phase !== 'parked' && f.phase !== 'pushback') || f.stand === null) continue;
+      const st = getLayout(s).byId.get(f.stand);
+      if (!st) continue;
+      const [Lt, St, D] = AC_SIZE[spriteType(f.typeId)] ?? AC_SIZE.A20N;
+      // aircraft frame: fwd along the fuselage, side towards the service side (away from the jet bridge)
+      const o = localPoint(st, 0, 0), ly = localPoint(st, 0, 1), lx = localPoint(st, 1, 0);
+      const fwd = [ly[0] - o[0], ly[1] - o[1]];
+      const side = [o[0] - lx[0], o[1] - lx[1]];
+      const at = (u: number, v: number): [number, number] => [f.x + side[0] * u + fwd[0] * v, f.y + side[1] * u + fwd[1] * v];
+      const face = (du: number, dv: number) => facingOf(side[0] * du + fwd[0] * dv, side[1] * du + fwd[1] * dv);
+      const put = (name: string, sprite: string, u: number, v: number) => want.set(`${f.id}:${name}`, [sprite, ...at(u, v)]);
+      const parked = f.phase === 'parked';
+      const since = now - f.arr, left = f.dep - now;
+      if (parked) {
+        put('cone1', 'gse_cone', St / 2, -Lt * 0.12);
+        put('cone2', 'gse_cone', -St / 2, -Lt * 0.12);
+        put('cone3', 'gse_cone', 0, -Lt / 2 - 0.4);
+        put('crew1', `crew_${face(-1, 0)}_0`, D / 2 + 1.3, Lt * 0.22 - 0.45);
+        put('crew2', `crew_${face(0, -1)}_0`, -D / 2 - 0.2, Lt / 2 - 0.2);
+        if (left > 8) {
+          put('belt', `gse_belt_${face(-1, 0)}`, D / 2 + 0.85, Lt * 0.22);
+          put('bags', `gse_bags_${face(0, 1)}`, D / 2 + 1.9, Lt * 0.22 + 1.0);
+        }
+        if (since > 6 && left > 20) put('fuel', `gse_fuel_${face(0, 1)}`, St * 0.34, 0.2);
+        if (since > 8 && left > 14) put('catering', `gse_catering_${face(-1, 0)}`, D / 2 + 0.95, -Lt * 0.36);
+      }
+      if ((parked && left < 12) || f.phase === 'pushback') put('tug', `gse_tug_${face(0, -1)}`, 0, Lt / 2 + 0.7);
+    }
+    for (const [key, [name, x, y]] of want) {
+      let sp = this.serviceSprites.get(key);
+      if (!sp || sp.label !== name) {
+        sp?.destroy();
+        sp = this.makeSprite(name);
+        sp.label = name;
+        this.objects.addChild(sp);
+        this.serviceSprites.set(key, sp);
+      }
+      sp.position.set(isoX(x, y), isoY(x, y));
+      sp.zIndex = x + y + 0.2;
+    }
+    for (const [key, sp] of this.serviceSprites) if (!want.has(key)) { sp.destroy(); this.serviceSprites.delete(key); }
   }
 
   private syncPax(s: GameState, dtReal: number): void {
@@ -462,6 +525,7 @@ export class Scene {
     }
     this.syncBuildings(s);
     this.syncAircraft(s);
+    this.syncService(s);
     this.syncPax(s, dtReal);
     this.drawOverlay(s, ghost, hover, selected);
     this.placeLabels();
