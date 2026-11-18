@@ -698,7 +698,7 @@ export class Scene {
       if (!c) {
         c = new Container();
         const bg = new Graphics();
-        const t = new Text({ text: '', style: { fontFamily: 'JetBrains Mono, monospace', fontSize: 11, fontWeight: '600', fill: 0xffffff } });
+        const t = new Text({ text: '', style: { fontFamily: 'Source Sans 3 Variable, sans-serif', fontSize: 12, fontWeight: '700', fill: 0xffffff } });
         t.anchor.set(0.5, 0.5);
         c.addChild(bg, t);
         this.labels.addChild(c);
@@ -710,8 +710,12 @@ export class Scene {
         t.text = b.text;
         c.label = String(b.color);
         const w = t.width + 14, h = 20;
-        bg.clear().roundRect(-w / 2, -h / 2, w, h, 10).fill({ color: b.color, alpha: 0.92 }).stroke({ color: 0x000000, width: 1, alpha: 0.35 });
-        bg.moveTo(-5, h / 2).lineTo(0, h / 2 + 6).lineTo(5, h / 2).fill({ color: b.color, alpha: 0.92 });
+        // square sign plate; black lettering on light plates, white on dark ones
+        const lum = (((b.color >> 16) & 255) * 0.3 + ((b.color >> 8) & 255) * 0.59 + (b.color & 255) * 0.11) / 255;
+        t.style.fill = lum > 0.6 ? 0x111111 : 0xffffff;
+        bg.clear().rect(-w / 2, -h / 2, w, h).fill({ color: b.color });
+        bg.rect(-w / 2, h / 2 - 3, w, 3).fill({ color: 0x111111 });
+        bg.moveTo(-5, h / 2).lineTo(0, h / 2 + 6).lineTo(5, h / 2).fill({ color: 0x111111 });
       }
       this.labelAt.set(b.key, [b.x, b.y]);
     }

@@ -349,7 +349,7 @@ export class Game {
       <div class="brand">${logoMark()}<span>${esc(s.name)}</span><span class="code">${esc(s.code)}</span></div>
       <div class="stat"><span>Cash</span><b class="${s.cash < 0 ? 'neg' : ''}">${money(s.cash)}</b></div>
       <div class="stat hide-sm"><span>Today</span><b class="${net < 0 ? 'neg' : 'pos'}">${net >= 0 ? '+' : ''}${money(net)}</b></div>
-      <div class="stat"><span>Rating</span><b>${Math.round(s.rating)}</b></div>
+      <div class="stat hide-sm"><span>Rating</span><b>${Math.round(s.rating)}</b></div>
       <div class="stat hide-sm"><span>Passengers</span><b>${num(s.pax.length)}</b></div>
       <button class="objective-chip hide-sm" data-act="tab" data-tab="airport" title="Board objective">${icon('target')}<span>${esc(s.board.objective.label)}</span><span class="mini-progress"><i style="width:${Math.min(100, prog.value * 100)}%"></i></span></button>
       <div class="spacer"></div>
@@ -376,7 +376,7 @@ export class Game {
         <button class="tool sq ${t.t === 'bulldoze' ? 'on' : ''}" data-act="tool" data-tool="bulldoze" title="Bulldoze (B): drag over things to remove">${icon('bulldoze')}</button>
         <button class="tool sq" data-act="rotate" title="Rotate (R)">${icon('rotate')}</button>
       </div>
-      ${PALETTE.map((g) => `<div class="pal-group"><div class="pal-h">${g.label}</div>${g.items.map(btn).join('')}</div>`).join('')}`;
+      ${PALETTE.map((g) => `<div class="pal-group" data-cat="${g.cat}"><div class="pal-h">${g.label}</div>${g.items.map(btn).join('')}</div>`).join('')}`;
   }
 
   /** Queue badges over modules where passengers are piling up. */

@@ -1,30 +1,59 @@
-// One consistent outline icon set (Lucide), inlined as SVG strings.
+// Filled pictograms (Phosphor, MIT) in the spirit of airport wayfinding symbols,
+// inlined as SVG strings.
 
-import {
-  Armchair, Building2, Car, Construction, DoorOpen, Fence, LogOut, Gauge, Grid3x3, Info, Landmark, Luggage, Map, Menu, MousePointer2,
-  Pause, Plane, PlaneLanding, PlaneTakeoff, RotateCw, Route, ScanLine, ShoppingBag, Shovel, Square, Target, Ticket, Toilet,
-  TowerControl, TreePine, TriangleAlert, Trophy, Users, Utensils, Wallet, X,
-} from 'lucide-static';
+import armchair from '@phosphor-icons/core/assets/fill/armchair-fill.svg?raw';
+import buildings from '@phosphor-icons/core/assets/fill/buildings-fill.svg?raw';
+import car from '@phosphor-icons/core/assets/fill/car-fill.svg?raw';
+import roadHorizon from '@phosphor-icons/core/assets/fill/road-horizon-fill.svg?raw';
+import doorOpen from '@phosphor-icons/core/assets/fill/door-open-fill.svg?raw';
+import gauge from '@phosphor-icons/core/assets/fill/gauge-fill.svg?raw';
+import squaresFour from '@phosphor-icons/core/assets/fill/squares-four-fill.svg?raw';
+import info from '@phosphor-icons/core/assets/fill/info-fill.svg?raw';
+import bank from '@phosphor-icons/core/assets/fill/bank-fill.svg?raw';
+import suitcase from '@phosphor-icons/core/assets/fill/suitcase-rolling-fill.svg?raw';
+import mapTrifold from '@phosphor-icons/core/assets/fill/map-trifold-fill.svg?raw';
+import list from '@phosphor-icons/core/assets/fill/list-fill.svg?raw';
+import cursor from '@phosphor-icons/core/assets/fill/cursor-fill.svg?raw';
+import pause from '@phosphor-icons/core/assets/fill/pause-fill.svg?raw';
+import airplane from '@phosphor-icons/core/assets/fill/airplane-fill.svg?raw';
+import landing from '@phosphor-icons/core/assets/fill/airplane-landing-fill.svg?raw';
+import takeoff from '@phosphor-icons/core/assets/fill/airplane-takeoff-fill.svg?raw';
+import rotate from '@phosphor-icons/core/assets/fill/arrow-clockwise-fill.svg?raw';
+import path from '@phosphor-icons/core/assets/fill/path-fill.svg?raw';
+import scan from '@phosphor-icons/core/assets/fill/scan-fill.svg?raw';
+import shoppingBag from '@phosphor-icons/core/assets/fill/shopping-bag-fill.svg?raw';
+import bulldozer from '@phosphor-icons/core/assets/fill/bulldozer-fill.svg?raw';
+import airplaneTilt from '@phosphor-icons/core/assets/fill/airplane-tilt-fill.svg?raw';
+import target from '@phosphor-icons/core/assets/fill/target-fill.svg?raw';
+import ticket from '@phosphor-icons/core/assets/fill/ticket-fill.svg?raw';
+import toilet from '@phosphor-icons/core/assets/fill/toilet-fill.svg?raw';
+import cellTower from '@phosphor-icons/core/assets/fill/cell-tower-fill.svg?raw';
+import tree from '@phosphor-icons/core/assets/fill/tree-evergreen-fill.svg?raw';
+import warning from '@phosphor-icons/core/assets/fill/warning-fill.svg?raw';
+import trophy from '@phosphor-icons/core/assets/fill/trophy-fill.svg?raw';
+import users from '@phosphor-icons/core/assets/fill/users-three-fill.svg?raw';
+import forkKnife from '@phosphor-icons/core/assets/fill/fork-knife-fill.svg?raw';
+import wallet from '@phosphor-icons/core/assets/fill/wallet-fill.svg?raw';
+import x from '@phosphor-icons/core/assets/fill/x-fill.svg?raw';
+import wall from '@phosphor-icons/core/assets/fill/wall-fill.svg?raw';
+import signOut from '@phosphor-icons/core/assets/fill/sign-out-fill.svg?raw';
 
 const ICONS = {
-  seats: Armchair, terminal: Building2, car: Car, runway: Construction, entrance: DoorOpen, gauge: Gauge, floor: Grid3x3, info: Info,
-  board: Landmark, baggage: Luggage, map: Map, menu: Menu, select: MousePointer2, pause: Pause, plane: Plane, landing: PlaneLanding,
-  takeoff: PlaneTakeoff, rotate: RotateCw, taxiway: Route, security: ScanLine, shop: ShoppingBag, bulldoze: Shovel, stand: Square,
-  target: Target, checkin: Ticket, toilets: Toilet, tower: TowerControl, tree: TreePine, alert: TriangleAlert, trophy: Trophy,
-  gate: Users, food: Utensils, wallet: Wallet, close: X, barrier: Fence, exit: LogOut,
+  seats: armchair, terminal: buildings, car, runway: roadHorizon, entrance: doorOpen, gauge, floor: squaresFour, info,
+  board: bank, baggage: suitcase, map: mapTrifold, menu: list, select: cursor, pause, plane: airplane, landing,
+  takeoff, rotate, taxiway: path, security: scan, shop: shoppingBag, bulldoze: bulldozer, stand: airplaneTilt,
+  target, checkin: ticket, toilets: toilet, tower: cellTower, tree, alert: warning, trophy,
+  gate: users, food: forkKnife, wallet, close: x, barrier: wall, exit: signOut,
 } as const;
 
 export type IconName = keyof typeof ICONS;
 
-/** Inline SVG icon that inherits colour and scales with font size. */
+/** Inline SVG pictogram that inherits colour and scales with font size. */
 export function icon(name: IconName, cls = ''): string {
-  return ICONS[name]
-    .replace(/width="24"/, 'width="1em"')
-    .replace(/height="24"/, 'height="1em"')
-    .replace('class="lucide', `aria-hidden="true" class="ico ${cls} lucide`);
+  return ICONS[name].replace('<svg ', `<svg aria-hidden="true" width="1em" height="1em" class="ico ${cls}" `);
 }
 
-/** Brand mark: a swept tail fin over a horizon line. */
+/** Brand mark: the airport's own sign plate, a black aircraft pictogram on yellow. */
 export function logoMark(cls = 'logo-mark'): string {
-  return `<svg class="${cls}" viewBox="0 0 32 32" aria-hidden="true"><path d="M7 25 L17 6 L25 6 L19 25 Z" fill="var(--accent)"/><path d="M19 25 L25 6 L27 6 L22 25 Z" fill="var(--accent)" opacity=".55"/><path d="M3 27.5 H29" stroke="var(--data)" stroke-width="2" stroke-linecap="round"/></svg>`;
+  return `<span class="${cls}">${icon('plane')}</span>`;
 }
