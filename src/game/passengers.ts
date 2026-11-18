@@ -4,11 +4,14 @@
 import { MODULES, FEES } from './catalog';
 import { acType } from '../data/aircraft';
 import { drawBags } from './baggage';
+import { busRate, isRemote, runBuses, takeSeat } from './buses';
+import { isBorder } from './border';
 import { openServers } from './staff';
 import { gateOf } from './flights';
 import { accessTile, frontDir, getLayout, layoutStamp, localPoint, walkable } from './grid';
 import { distanceTo, nextStep, UNREACHABLE } from './paths';
 import type { Building, Flight, GameState, Pax } from './types';
+import { readyAt } from './types';
 
 export const WALK = 4.2; // tiles per game minute
 const NEED_FOOD = 1, NEED_SHOP = 2, NEED_TOILET = 4;
@@ -82,7 +85,7 @@ export function queueSlots(s: GameState, b: Building): [number, number][] {
 export function resetServices(s: GameState): void {
   services.clear();
   for (const p of s.pax) {
-    if (p.state === 'queue' || p.state === 'service') p.state = p.stage === 'checkin' ? 'toCheckin' : 'toSecurity';
+    if (p.state === 'queue' || p.state === 'service') p.state = p.stage === 'checkin' ? 'toCheckin' : p.stage === 'passport' ? 'toPassport' : 'toSecurity';
     if (p.state === 'atNeed' || p.state === 'atGate') svc(p.target).users.add(p.id);
     p.tx = p.x;
     p.ty = p.y;
@@ -141,6 +144,8 @@ export function newPax(s: GameState, f: Flight, dep: boolean, x: number, y: numb
   return p;
 }
 
+const busCarry = new Map<number, number>(); // fractional arrivals carried over between steps
+
 /** Spawn departing passengers at entrances and arriving ones at gates. */
 export function spawnPax(s: GameState, f: Flight, dt: number): void {
   const now = s.minute;
@@ -163,16 +168,22 @@ export function spawnPax(s: GameState, f: Flight, dt: number): void {
     }
   }
   if (f.phase === 'parked' && f.deplaned < f.paxIn) {
-    const gate = gateOf(s, f) ?? ofKind(s, 'gate')[0];
+    const remote = isRemote(s, f);
+    const gate = gateOf(s, f) ?? (remote ? ofKind(s, 'busgate')[0] : undefined) ?? ofKind(s, 'gate')[0];
     if (!gate) { f.deplaned = f.paxIn; return; }
-    const n = Math.min(f.paxIn - f.deplaned, Math.ceil(dt * 14));
+    // jet bridges let people off quickly; buses bring them in loads
+    const rate = remote ? busRate(s, f) : 14;
+    busCarry.set(f.id, (busCarry.get(f.id) ?? 0) + rate * dt);
+    const n = Math.min(f.paxIn - f.deplaned, Math.floor(busCarry.get(f.id)!));
+    busCarry.set(f.id, busCarry.get(f.id)! - n);
     for (let i = 0; i < n; i++) {
       const [x, y] = spawnPoint(gate, true);
       const p = newPax(s, f, false, x + rnd(-0.4, 0.4), y + rnd(-0.3, 0.3));
       p.bags = drawBags();
       f.bagsIn += p.bags;
       p.bagAt = f.bagsIn;
-      if (p.bags) p.state = 'toBaggage';
+      if (isBorder(s, f)) { p.state = 'toPassport'; p.stage = 'passport'; }
+      else if (p.bags) p.state = 'toBaggage';
       else { p.state = 'toExit'; p.stage = 'exit'; }
       // walk out through the gate lounge before following the flow field
       const [ax, ay] = accessTile(gate);
@@ -207,7 +218,11 @@ function walkTo(s: GameState, p: Pax, b: Building, dt: number): boolean | 'lost'
       const ns = nextStep(s, b, p.x, p.y, !p.dep);
       if (!ns) {
         if (distanceTo(s, b, p.x, p.y, !p.dep) === 0) return true;
-        return 'lost';
+        // standing off the floor plan (pushed out of a crowd): step back onto the nearest walkable tile
+        const back = nearestWalkable(s, p, b);
+        if (!back) return 'lost';
+        p.tx = back[0] + 0.5; p.ty = back[1] + 0.5;
+        continue;
       }
       const isGoal = distanceTo(s, b, ns[0], ns[1], !p.dep) === 0;
       p.tx = ns[0] + 0.5 + (isGoal ? 0 : p.ox);
@@ -218,6 +233,20 @@ function walkTo(s: GameState, p: Pax, b: Building, dt: number): boolean | 'lost'
     left -= Math.min(before, left);
   }
   return false;
+}
+
+/** The closest walkable tile (within 3) from which the target can be reached. */
+function nearestWalkable(s: GameState, p: Pax, b: Building): [number, number] | null {
+  const cx = Math.floor(p.x), cy = Math.floor(p.y);
+  if (walkable(s, cx, cy, !p.dep) && distanceTo(s, b, cx + 0.5, cy + 0.5, !p.dep) < UNREACHABLE) return null; // on the floor already
+  let best: [number, number] | null = null, bd = Infinity;
+  for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+    const x = cx + dx, y = cy + dy;
+    if (!walkable(s, x, y, !p.dep) || distanceTo(s, b, x + 0.5, y + 0.5, !p.dep) >= UNREACHABLE) continue;
+    const d = Math.hypot(dx, dy);
+    if (d < bd) { bd = d; best = [x, y]; }
+  }
+  return best;
 }
 
 function goTo(p: Pax, b: Building | undefined, state: Pax['state'], stage: Pax['stage']): boolean {
@@ -231,6 +260,11 @@ function goTo(p: Pax, b: Building | undefined, state: Pax['state'], stage: Pax['
 }
 
 function nextAfterSecurity(s: GameState, p: Pax, f: Flight | undefined): void {
+  if (f && p.dep && !p.cleared && isBorder(s, f)) {
+    const pc = choose(s, 'passport', p);
+    if (pc && goTo(p, pc, 'toPassport', 'passport')) return;
+    p.cleared = true; // no passport control to be found: they wander through (the border police will fine you)
+  }
   const time = f ? f.dep - s.minute : 0;
   if (time > 45) {
     for (const [bit, kind] of [[NEED_TOILET, 'toilets'], [NEED_FOOD, 'food'], [NEED_SHOP, 'shop']] as const) {
@@ -241,8 +275,8 @@ function nextAfterSecurity(s: GameState, p: Pax, f: Flight | undefined): void {
       p.mood -= 4; // wanted it, couldn't find it
     }
   }
-  // stands without their own gate board through the nearest gate by bus
-  const gate = f && (gateOf(s, f) ?? (f.stand !== null ? choose(s, 'gate', p) : undefined));
+  // remote stands board by apron bus from a bus gate (or, failing that, any gate)
+  const gate = f && (gateOf(s, f) ?? (f.stand !== null ? choose(s, 'busgate', p) ?? choose(s, 'gate', p) : undefined));
   if (gate && distanceTo(s, gate, p.x, p.y) < UNREACHABLE) { goTo(p, gate, 'toGate', 'gate'); return; }
   // gate not known yet: rest on seating if there is any
   const seat = choose(s, 'seats', p, (x) => usersOf(x.id) >= 4);
@@ -250,6 +284,17 @@ function nextAfterSecurity(s: GameState, p: Pax, f: Flight | undefined): void {
   p.state = 'atGate';
   p.target = 0;
   p.timer = s.minute + 10;
+}
+
+/** Through passport control: departing passengers carry on to the gate, arriving ones to their bags or out. */
+function afterPassport(s: GameState, p: Pax, f: Flight | undefined, onDone: (p: Pax) => void): void {
+  if (p.dep) { nextAfterSecurity(s, p, f); return; }
+  // still walking out of a gate lounge: keep heading for its door before following the floor plan
+  const [tx, ty] = [p.tx, p.ty];
+  const inside = !walkable(s, Math.floor(p.x), Math.floor(p.y), true);
+  const ok = (p.bags && goTo(p, choose(s, 'baggage', p), 'toBaggage', 'baggage')) || goTo(p, choose(s, 'entrance', p), 'toExit', 'exit');
+  if (!ok) { finish(s, p, onDone); return; }
+  if (inside) { p.tx = tx; p.ty = ty; }
 }
 
 /** A passenger finished at the airport: record its mood and remove it. */
@@ -268,13 +313,13 @@ export function updatePax(s: GameState, dt: number, flights: Map<number, Flight>
     const b = p.target ? L.byId.get(p.target) : undefined;
     if (p.state === 'queue' || p.state === 'service') p.waited += p.state === 'queue' ? dt : 0;
     // missed flight: the gate closes 10 minutes before departure
-    const closed = f && ((f.phase === 'parked' && now >= f.dep - 10) || f.phase === 'pushback' || f.phase === 'taxi_out' || f.phase === 'lineup' || f.phase === 'takeoff' || f.phase === 'departed' || f.phase === 'cancelled');
-    const safe = p.state === 'boarding' || p.state === 'toExit' || (p.state === 'atGate' && f?.phase === 'parked' && !!b && b.kind === 'gate');
+    const closed = f && ((f.phase === 'parked' && now >= readyAt(f) - 10) || f.phase === 'pushback' || f.phase === 'taxi_out' || f.phase === 'lineup' || f.phase === 'takeoff' || f.phase === 'departed' || f.phase === 'cancelled');
+    const safe = p.state === 'boarding' || p.state === 'toExit' || (p.state === 'atGate' && f?.phase === 'parked' && !!b && (b.kind === 'gate' || b.kind === 'busgate'));
     if (p.dep && f && closed && !safe) {
       if (f.phase !== 'cancelled') f.missed++;
       // a no-show who checked bags: their bags must come off the aircraft before it can leave
-      if (f.phase === 'parked' && p.bags && p.stage !== 'checkin') f.waitUntil = Math.min(f.dep + 15, Math.max(f.waitUntil, f.dep + 3) + 0.4 * p.bags);
-      p.mood -= f.phase === 'cancelled' ? 25 : 40;
+      if (f.phase === 'parked' && p.bags && p.stage !== 'checkin') f.waitUntil = Math.min(readyAt(f) + 15, Math.max(f.waitUntil, readyAt(f) + 3) + 0.4 * p.bags);
+      p.mood -= f.phase === 'cancelled' ? 30 : 60; // stranded passengers are furious
       dropFromService(p);
       p.dep = false;
       if (!goTo(p, choose(s, 'entrance', p), 'toExit', 'exit')) { finish(s, p, onDone); continue; }
@@ -298,13 +343,22 @@ export function updatePax(s: GameState, dt: number, flights: Map<number, Flight>
         else if (r) joinQueue(p, target, now);
         break;
       }
+      case 'toPassport': {
+        const target = b ?? choose(s, 'passport', p);
+        if (!target) { p.cleared = true; afterPassport(s, p, f, onDone); break; }
+        p.target = target.id;
+        const r = walkTo(s, p, target, dt);
+        if (r === 'lost') lose(p, now);
+        else if (r) joinQueue(p, target, now);
+        break;
+      }
       case 'queue': {
-        if (!b) { p.state = p.stage === 'checkin' ? 'toCheckin' : 'toSecurity'; break; }
+        if (!b) { p.state = p.stage === 'checkin' ? 'toCheckin' : p.stage === 'passport' ? 'toPassport' : 'toSecurity'; break; }
         const v = svc(b.id);
         const k = v.queue.indexOf(p.id);
         const slots = queueSlots(s, b);
         const [qx, qy] = slots[Math.min(k, slots.length - 1)];
-        const over = k >= slots.length ? (k - slots.length + 1) * 0.15 : 0; // overflow bunches up at the tail
+        const over = k >= slots.length ? Math.min(1.2, (k - slots.length + 1) * 0.04) : 0; // overflow bunches up at the tail, not into walls
         stepTo(p, qx + p.ox * over, qy + p.oy * over, WALK * dt);
         if (p.waited > 12) p.mood -= 0.35 * dt;
         break;
@@ -318,7 +372,10 @@ export function updatePax(s: GameState, dt: number, flights: Map<number, Flight>
         if (now >= (v.serving.get(p.id) ?? 0)) {
           v.serving.delete(p.id);
           v.done.push(now);
-          if (b.kind === 'checkin') {
+          if (b.kind === 'passport') {
+            p.cleared = true;
+            afterPassport(s, p, f, onDone);
+          } else if (b.kind === 'checkin') {
             if (f) f.bagsChecked += p.bags;
             goTo(p, choose(s, 'security', p), 'toSecurity', 'security') || nextAfterSecurity(s, p, f);
           }
@@ -371,7 +428,9 @@ export function updatePax(s: GameState, dt: number, flights: Map<number, Flight>
           if (now >= p.timer) { p.timer = now + 10; nextAfterSecurity(s, p, f); }
           break;
         }
-        if (f.phase === 'parked' && now >= f.dep - 35) {
+        if (f.phase === 'parked' && now >= readyAt(f) - 35) {
+          if (isRemote(s, f) && !takeSeat(f)) break; // waiting for the next bus
+          if (isRemote(s, f)) p.mood -= 4; // nobody likes the bus
           svc(b.id).users.delete(p.id);
           const m = MODULES[b.kind];
           const [bx, by] = localPoint(b, m.w * 0.5, 0.3);
@@ -399,6 +458,7 @@ export function updatePax(s: GameState, dt: number, flights: Map<number, Flight>
   }
   s.pax = s.pax.filter((p) => p.timer !== -1);
 
+  runBuses(s, dt);
   // serve queues at desks and lanes that have staff on shift
   const open = openServers(s);
   for (const b of s.buildings) {

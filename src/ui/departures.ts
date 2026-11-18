@@ -1,5 +1,7 @@
 // Split-flap departure board for the airport's flights.
 
+import { isRemote } from '../game/buses';
+import { readyAt } from '../game/types';
 import { airport } from '../data/airports';
 import { gateOf } from '../game/flights';
 import type { Flight, GameState } from '../game/types';
@@ -28,7 +30,7 @@ export function statusOf(s: GameState, f: Flight): string {
     case 'departed': case 'takeoff': case 'lineup': case 'taxi_out': case 'pushback': return 'DEPARTED';
     case 'parked': {
       if (now > f.dep + 1) return f.bagsLoaded < f.bagsChecked - 0.5 || f.bagsUnloaded < f.bagsIn - 0.5 ? 'BAGGAGE' : 'DELAYED';
-      return now >= f.dep - 35 ? 'BOARDING' : 'GATE OPEN';
+      return now >= readyAt(f) - 35 ? 'BOARDING' : 'GATE OPEN';
     }
     default: return now > f.dep ? 'DELAYED' : f.stand === null && now > f.arr - 60 ? 'NO STAND' : now >= f.dep - 150 ? 'CHECK-IN' : 'ON TIME';
   }
@@ -39,7 +41,7 @@ function rows(s: GameState, limit: number): Row[] {
     .filter((f) => f.dep >= s.minute - 20 && f.dep <= s.minute + 16 * 60)
     .sort((a, b) => a.dep - b.dep)
     .slice(0, limit)
-    .map((f) => ({ time: clock(f.dep), flight: f.number, dest: strip(airport(f.dest).city), gate: gateLabel(s, gateOf(s, f)?.id), status: statusOf(s, f) }));
+    .map((f) => ({ time: clock(f.dep), flight: f.number, dest: strip(airport(f.dest).city), gate: gateLabel(s, gateOf(s, f)?.id) || (isRemote(s, f) ? 'BUS' : ''), status: statusOf(s, f) }));
 }
 
 export function boardShell(rowsN: number): string {

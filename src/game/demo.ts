@@ -30,6 +30,7 @@ export function buildDemo(s: GameState): string[] {
   ok(place(s, 'food', 62, 58, 0), 'food');
   ok(place(s, 'shop', 36, 58, 0), 'shop');
   ok(place(s, 'toilets', 44, 58, 0), 'toilets');
+  ok(place(s, 'passport', 52, 57, 0), 'passport control');
   ok(place(s, 'baggage', 32, 68, 0), 'baggage');
   for (const x of [58, 60]) ok(place(s, 'seats', x, 66, 0), 'seats');
   ok(place(s, 'carpark', 80, 81, 0), 'car park');

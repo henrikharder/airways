@@ -11,14 +11,15 @@ export function shifts(s: GameState): number {
 
 /** Positions to fill at any one time, per role. */
 export function positions(s: GameState): Record<Role, number> {
-  let checkin = 0, security = 0, stands = 0, halls = 0;
+  let checkin = 0, security = 0, stands = 0, halls = 0, busgates = 0;
   for (const b of s.buildings) {
     if (b.kind === 'checkin') checkin += MODULES.checkin.servers!;
     else if (b.kind === 'security') security += MODULES.security.servers!;
     else if (b.kind.startsWith('stand_')) stands++;
     else if (b.kind === 'bagsort') halls++;
+    else if (b.kind === 'busgate') busgates++;
   }
-  return { checkin, security, ground: stands * 6 + halls * 4 };
+  return { checkin, security, ground: stands * 6 + halls * 4 + busgates * 2 };
 }
 
 /** Hires needed per role to keep every position covered all day. */

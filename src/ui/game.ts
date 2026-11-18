@@ -3,9 +3,11 @@ import { AIRPORTS, airport } from '../data/airports';
 import { progress, weekLabel } from '../game/board';
 import { BAGS, MODULES, NIGHT, PAINTS, ROLES, standClassFor, standFits, type Category } from '../game/catalog';
 import { bagsPending, halls, sortRate } from '../game/baggage';
+import { busCount, isRemote } from '../game/buses';
+import { crossesBorder, hasPassportControl, ZONE_LABEL, zoneOf, type GateZone } from '../game/border';
 import { CURFEWS, planningMultiplier, setCurfew } from '../game/night';
 import { coverage, needed, openServers, positions, shifts, staffToNeed, wagesPerDay } from '../game/staff';
-import { acceptOffer, airlineColor, airlineName, declineOffer, gateOf, reachableStands, runway, hasTower } from '../game/flights';
+import { acceptOffer, airlineColor, airlineName, allocateStands, declineOffer, gateOf, reachableStands, runway, hasTower } from '../game/flights';
 import { accessTile, bulldozeAt, checkPlace, footprint, getLayout, idx, layoutStamp, paintCheck, paintRect, place, walkable } from '../game/grid';
 import { buildDemo } from '../game/demo';
 import { buildExpanded } from '../game/expanded';
@@ -30,7 +32,7 @@ const SPEED_LABEL = ['', '1×', '2×', '3×', '4×'];
 
 const PALETTE: { cat: Category | 'tools'; label: string; items: ({ build: ModuleKind } | { paint: PaintKind })[] }[] = [
   { cat: 'airside', label: 'Airside', items: [{ build: 'runway' }, { build: 'tower' }, { paint: 'taxiway' }, { paint: 'apron' }, { build: 'stand_s' }, { build: 'stand_m' }, { build: 'stand_l' }, { build: 'stand_xl' }, { build: 'bagsort' }] },
-  { cat: 'terminal', label: 'Terminal', items: [{ paint: 'floor' }, { build: 'entrance' }, { build: 'checkin' }, { build: 'security' }, { paint: 'barrier' }, { build: 'exit' }, { build: 'gate' }, { build: 'baggage' }] },
+  { cat: 'terminal', label: 'Terminal', items: [{ paint: 'floor' }, { build: 'entrance' }, { build: 'checkin' }, { build: 'security' }, { paint: 'barrier' }, { build: 'exit' }, { build: 'passport' }, { build: 'gate' }, { build: 'busgate' }, { build: 'baggage' }] },
   { cat: 'comfort', label: 'Comforts', items: [{ build: 'food' }, { build: 'shop' }, { build: 'toilets' }, { build: 'seats' }] },
   { cat: 'landside', label: 'Landside', items: [{ build: 'carpark' }, { build: 'tree' }] },
 ];
@@ -38,7 +40,7 @@ const PALETTE: { cat: Category | 'tools'; label: string; items: ({ build: Module
 const ITEM_ICON: Partial<Record<ModuleKind | PaintKind, IconName>> = {
   runway: 'runway', tower: 'tower', taxiway: 'taxiway', apron: 'floor', stand_s: 'stand', stand_m: 'stand', stand_l: 'stand', stand_xl: 'stand',
   floor: 'terminal', entrance: 'entrance', checkin: 'checkin', security: 'security', gate: 'gate', baggage: 'baggage', food: 'food', shop: 'shop',
-  toilets: 'toilets', seats: 'seats', carpark: 'car', tree: 'tree', bagsort: 'baggage', barrier: 'barrier', exit: 'exit',
+  toilets: 'toilets', seats: 'seats', carpark: 'car', tree: 'tree', bagsort: 'baggage', busgate: 'bus', passport: 'passport', barrier: 'barrier', exit: 'exit',
 };
 
 export class Game {
@@ -367,6 +369,15 @@ export class Game {
       }
       case 'staff-match': staffToNeed(this.s); this.toast('Staff matched to the airport'); return this.renderPanel();
       case 'curfew': setCurfew(this.s, d.c as Curfew); return this.renderPanel();
+      case 'zone': {
+        if (!this.selected) return;
+        const order: GateZone[] = ['swing', 'schengen', 'border'];
+        this.selected.zone = order[(order.indexOf(zoneOf(this.selected)) + 1) % 3];
+        // stands not yet in use get reassigned under the new zoning
+        for (const f of this.s.flights) if (f.phase === 'scheduled') f.stand = null;
+        allocateStands(this.s);
+        return this.renderPanel();
+      }
       case 'deselect': this.selected = null; return this.renderPanel();
       case 'demolish': {
         if (!this.selected) return;
@@ -462,8 +473,8 @@ export class Game {
     const reach = reachableStands(s);
     const cut = stands.filter((b) => !reach.has(b.id)).length;
     if (stands.length && runway(s) && cut) w.push(`${cut} stand${cut > 1 ? 's' : ''} not connected to the runway by taxiway.`);
-    const noGate = stands.filter((b) => !b.link).length;
-    if (noGate) w.push(`${noGate} stand${noGate > 1 ? 's have' : ' has'} no gate within reach (passengers will be bussed).`);
+    const remote = stands.filter((b) => !b.link).length;
+    if (remote && !has('busgate')) w.push(`${remote} remote stand${remote > 1 ? 's' : ''} (no gate in reach): build a bus gate, or passengers squeeze onto one improvised bus.`);
     const entrance = s.buildings.find((b) => b.kind === 'entrance');
     if (entrance) {
       const [ex, ey] = accessTile(entrance);
@@ -478,6 +489,11 @@ export class Game {
     if (sec.breach) w.push('Security breach: gates can be reached without screening. Wall off the airside with barriers (fined daily).');
     if (sec.badLanes) w.push(`${sec.badLanes} security lane${sec.badLanes > 1 ? 's open' : ' opens'} back into the landside or onto a blocked tile.`);
     if (sec.trapped) w.push('Arriving passengers cannot get out: add an arrivals exit in the barrier (fined daily).');
+    // borders
+    const border = s.contracts.filter((c) => crossesBorder(s.city, c.dest));
+    if (border.length && !hasPassportControl(s)) w.push(`${border.length} non-Schengen route${border.length > 1 ? 's need' : ' needs'} passport control airside (border police fine you daily).`);
+    const gates = s.buildings.filter((b) => b.kind === 'gate');
+    if (border.length && gates.length && gates.every((g) => zoneOf(g) === 'schengen') && !stands.some((b) => !b.link)) w.push('No gate accepts non-Schengen flights: set a gate to swing or non-Schengen.');
     // staff
     const pos = positions(s);
     const open = openServers(s);
@@ -595,7 +611,7 @@ export class Game {
     const s = this.s;
     const list = s.flights.filter((f) => f.dep >= s.minute - 60 && f.dep <= s.minute + 24 * 60).sort((a, b) => a.dep - b.dep).slice(0, 30);
     return `${boardShell(8)}<div data-rest><h2>Today and tomorrow</h2>
-      ${list.length ? `<table class="tbl"><thead><tr><th>Dep</th><th>Flight</th><th>To</th><th>Gate</th><th>Status</th><th class="r">Pax</th></tr></thead><tbody>${list.map((f) => `<tr><td class="mono">${clock(f.dep)}</td><td><span class="chip" style="--c:${airlineColor(f.airline)}">${f.number}</span></td><td>${esc(airport(f.dest).city)}</td><td>${gateLabel(s, gateOf(s, f)?.id) || '—'}</td><td class="small">${statusOf(s, f)}</td><td class="r">${f.phase === 'departed' ? `${f.boarded}/${f.paxOut}` : f.paxOut}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">No flights scheduled. Sign an airline in the Airlines tab.</p>'}</div>`;
+      ${list.length ? `<table class="tbl"><thead><tr><th>Dep</th><th>Flight</th><th>To</th><th>Gate</th><th>Status</th><th class="r">Pax</th></tr></thead><tbody>${list.map((f) => `<tr><td class="mono">${clock(f.dep)}</td><td><span class="chip" style="--c:${airlineColor(f.airline)}">${f.number}</span></td><td>${esc(airport(f.dest).city)}</td><td>${gateLabel(s, gateOf(s, f)?.id) || (isRemote(s, f) ? 'Bus' : '—')}</td><td class="small">${statusOf(s, f)}</td><td class="r">${f.phase === 'departed' ? `${f.boarded}/${f.paxOut}` : f.paxOut}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">No flights scheduled. Sign an airline in the Airlines tab.</p>'}</div>`;
   }
 
   private opsView(): string {
@@ -631,6 +647,14 @@ export class Game {
           ${this.kpi('To carousels', num(Math.round(toBelt)))}
         </section>
         <p class="small muted">Check-in hands bags to the baggage hall; trains carry them to the aircraft, which wait up to ${BAGS.maxWait} minutes for them. ${halls(s).length ? '' : 'Without a hall a small manual team sorts about 3 bags a minute.'}</p>
+      </section>
+      <section class="card"><h3>${icon('passport')} Borders</h3>
+        <section class="kpis">
+          ${this.kpi('Non-Schengen', `${s.contracts.filter((c) => crossesBorder(s.city, c.dest)).length}/${s.contracts.length}`)}
+          ${this.kpi('Passport units', num(s.buildings.filter((b) => b.kind === 'passport').length), hasPassportControl(s) ? '' : 'warn')}
+          ${this.kpi('Swing / S / Non-S', (['swing', 'schengen', 'border'] as GateZone[]).map((z) => s.buildings.filter((b) => b.kind === 'gate' && zoneOf(b) === z).length).join(' / '))}
+        </section>
+        <p class="small muted">Flights outside Schengen (from here: the UK, Ireland, the Gulf, Turkey, the Americas, Asia) need passport control on the way out and on the way in. Gates are swing / Schengen / non-Schengen; change a gate's zone in its inspector.</p>
       </section>
       <section class="card"><h3>${icon('landing')} Night operations</h3>
         <div class="seg">${(Object.keys(CURFEWS) as Curfew[]).map((c) => `<button class="${s.curfew === c ? 'on' : ''}" data-act="curfew" data-c="${c}">${CURFEWS[c].label}</button>`).join('')}</div>
@@ -670,13 +694,15 @@ export class Game {
       const stand = b.kind === 'gate' ? (b.link ? getLayout(s).byId.get(b.link) : undefined) : b;
       const flights = stand ? s.flights.filter((f) => f.stand === stand.id && f.phase !== 'departed' && f.phase !== 'cancelled').sort((a, c) => a.arr - c.arr).slice(0, 5) : [];
       extra = `<section class="card"><h3>${b.kind === 'gate' ? `Gate ${gateLabel(s, b.id)}` : 'Stand'}</h3>
-        <p class="small muted">${b.link ? `Linked to ${b.kind === 'gate' ? 'a stand' : `gate ${gateLabel(s, b.link)}`}.` : b.kind === 'gate' ? 'No stand within reach yet.' : 'No gate within reach: passengers walk to another gate and are bussed.'}${b.kind.startsWith('stand_') && !reachableStands(s).has(b.id) ? ' <span class="neg">Not connected to the runway.</span>' : ''}</p>
+        ${b.kind === 'gate' ? `<div class="row"><span>Zone: <b>${ZONE_LABEL[zoneOf(b)]}</b></span><button class="btn sm" data-act="zone">Change zone</button></div>` : ''}
+        <p class="small muted">${b.link ? `Linked to ${b.kind === 'gate' ? 'a stand' : `gate ${gateLabel(s, b.link)}`}.` : b.kind === 'gate' ? 'No stand within reach yet.' : 'Remote stand (no gate within reach): passengers ride apron buses from a bus gate.'}${b.kind.startsWith('stand_') && !reachableStands(s).has(b.id) ? ' <span class="neg">Not connected to the runway.</span>' : ''}</p>
         ${flights.length ? `<table class="tbl"><tbody>${flights.map((f) => `<tr><td class="mono">${clock(f.arr)}–${clock(f.dep)}</td><td><span class="chip" style="--c:${airlineColor(f.airline)}">${f.number}</span></td><td class="small">${statusOf(s, f)}</td></tr>`).join('')}</tbody></table>` : '<p class="muted small">No flights assigned.</p>'}</section>`;
     }
     if (b.kind === 'bagsort') {
       const n = halls(s).length;
       stats.push(this.kpi('Sorting', `${(sortRate(s) / n).toFixed(1)}/min`), this.kpi('Trains', num(BAGS.trainsPerHall)), this.kpi('Halls', num(n)));
     }
+    if (b.kind === 'busgate') stats.push(this.kpi('Buses', num(busCount(s))), this.kpi('Seats each', '50'));
     if (b.kind === 'runway') extra = `<p class="muted small">${hasTower(s) ? 'Operating.' : '<span class="neg">Needs a control tower to operate.</span>'}</p>`;
     return `<button class="back" data-act="deselect">← Back</button>
       <div class="insp-h">${m.sprite ? `<img src="${Scene.thumb(b.kind)}" alt="">` : `<span class="tool-ico big">${icon(ITEM_ICON[b.kind] ?? 'stand')}</span>`}<div><h2>${esc(m.name)}</h2><p class="muted small">${esc(m.desc)}</p></div></div>

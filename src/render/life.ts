@@ -6,7 +6,7 @@ import { MODULES, spriteType } from '../game/catalog';
 import { drivable, getLayout, idx, localPoint, standPoints } from '../game/grid';
 import { aircraftPath, simplify } from '../game/paths';
 import type { GameState } from '../game/types';
-import { T } from '../game/types';
+import { readyAt, T } from '../game/types';
 import { AC_SIZE, isoX, isoY, ZPX } from './iso';
 
 type Frame = { w: number; h: number; ax: number; ay: number; scale: number };
@@ -34,7 +34,7 @@ export class GroundLife {
   private vehicles = new Map<string, Vehicle>();
   private parked = new Map<string, Sprite>();
   private bridges = new Map<number, { c: Container; g: Graphics; rot: Sprite; cab: Sprite; len: number; drawn: string }>();
-  private shuttles = new Map<number, { sp: Sprite; path: [number, number][]; i: number; dir: 1 | -1; x: number; y: number; retiring: boolean }>();
+  private shuttles = new Map<string, { sp: Sprite; base: string; path: [number, number][]; i: number; dir: 1 | -1; x: number; y: number; retiring: boolean }>();
 
   constructor(private kit: SpriteKit) {}
 
@@ -46,42 +46,47 @@ export class GroundLife {
   }
 
   /**
-   * Baggage trains running between the baggage hall and aircraft on stand while
-   * there are bags to move, along the real taxiway and apron network.
+   * Shuttles on the apron network: baggage trains between the baggage hall and
+   * aircraft with bags to move, and apron buses between a bus gate and aircraft
+   * on remote stands while passengers board or get off.
    */
   private syncShuttles(s: GameState, dtReal: number): void {
-    const halls = s.buildings.filter((b) => b.kind === 'bagsort');
     const L = getLayout(s);
-    const active = new Set<number>();
-    if (halls.length) {
-      for (const f of s.flights) {
-        if (f.phase !== 'parked' || f.stand === null) continue;
-        if (f.bagsSorted - f.bagsLoaded < 1 && f.bagsIn - f.bagsUnloaded < 1) continue;
-        active.add(f.id);
-        if (this.shuttles.has(f.id)) continue;
-        const st = L.byId.get(f.stand);
-        if (!st) continue;
-        const [ex, ey] = standPoints(st).entry;
-        // the drivable tile next to the nearest hall
-        let best: [number, number] | null = null, bd = Infinity;
-        for (const h of halls) for (let y = h.y - 1; y <= h.y + h.h; y++) for (let x = h.x - 1; x <= h.x + h.w; x++) {
-          if (!drivable(s, x, y)) continue;
-          const d = Math.abs(x - ex) + Math.abs(y - ey);
-          if (d < bd) { bd = d; best = [x, y]; }
-        }
-        if (!best) continue;
-        const raw = aircraftPath(s, best[0], best[1], ex, ey);
-        if (!raw) continue;
-        const path = simplify(raw);
-        const sp = this.kit.make('gse_bags_0');
-        this.kit.layer.addChild(sp);
-        this.shuttles.set(f.id, { sp, path, i: 1, dir: 1, x: path[0][0], y: path[0][1], retiring: false });
+    const halls = s.buildings.filter((b) => b.kind === 'bagsort');
+    const busGates = s.buildings.filter((b) => b.kind === 'busgate');
+    const jobs: { key: string; base: string; from: typeof halls; f: (typeof s.flights)[number] }[] = [];
+    for (const f of s.flights) {
+      if (f.phase !== 'parked' || f.stand === null) continue;
+      const st = L.byId.get(f.stand);
+      if (!st) continue;
+      if (halls.length && (f.bagsSorted - f.bagsLoaded >= 1 || f.bagsIn - f.bagsUnloaded >= 1)) jobs.push({ key: `${f.id}:bags`, base: 'gse_bags', from: halls, f });
+      const remote = !st.link;
+      if (remote && busGates.length && (f.deplaned < f.paxIn || s.minute >= readyAt(f) - 35)) jobs.push({ key: `${f.id}:bus`, base: 'bus', from: busGates, f });
+    }
+    const active = new Set(jobs.map((j) => j.key));
+    for (const j of jobs) {
+      if (this.shuttles.has(j.key)) continue;
+      const st = L.byId.get(j.f.stand!)!;
+      const [ex, ey] = standPoints(st).entry;
+      // the drivable tile nearest the stand, within a few tiles of a hall or bus gate
+      let best: [number, number] | null = null, bd = Infinity;
+      for (const h of j.from) for (let y = h.y - 3; y <= h.y + h.h + 2; y++) for (let x = h.x - 3; x <= h.x + h.w + 2; x++) {
+        if (!drivable(s, x, y)) continue;
+        const d = Math.abs(x - ex) + Math.abs(y - ey) + (Math.abs(x - (h.x + h.w / 2)) + Math.abs(y - (h.y + h.h / 2))) * 2;
+        if (d < bd) { bd = d; best = [x, y]; }
       }
+      if (!best) continue;
+      const raw = aircraftPath(s, best[0], best[1], ex, ey);
+      if (!raw) continue;
+      const path = simplify(raw);
+      const sp = this.kit.make(`${j.base}_0`);
+      this.kit.layer.addChild(sp);
+      this.shuttles.set(j.key, { sp, base: j.base, path, i: 1, dir: 1, x: path[0][0], y: path[0][1], retiring: false });
     }
     const speed = 2.4 * dtReal;
-    for (const [id, t] of this.shuttles) {
-      if (!active.has(id) && !t.retiring) {
-        // finish by driving back to the hall
+    for (const [key, t] of this.shuttles) {
+      if (!active.has(key) && !t.retiring) {
+        // finish by driving back to the hall or bus gate
         t.retiring = true;
         if (t.dir === 1) { t.dir = -1; t.i = Math.max(0, t.i - 1); }
       }
@@ -89,7 +94,7 @@ export class GroundLife {
       while (step > 0) {
         const [tx, ty] = t.path[t.i];
         const dx = tx - t.x, dy = ty - t.y, d = Math.hypot(dx, dy);
-        if (d > 1e-3) this.setFrame(t.sp, `gse_bags_${facingOf(dx, dy)}`);
+        if (d > 1e-3) this.setFrame(t.sp, `${t.base}_${facingOf(dx, dy)}`);
         if (d > step) { t.x += (dx / d) * step; t.y += (dy / d) * step; step = 0; break; }
         t.x = tx; t.y = ty; step -= d;
         const next = t.i + t.dir;
@@ -101,17 +106,12 @@ export class GroundLife {
         }
         t.i = next;
       }
-      if (step === -1) { t.sp.destroy(); this.shuttles.delete(id); continue; }
+      if (step === -1) { t.sp.destroy(); this.shuttles.delete(key); continue; }
       t.sp.position.set(isoX(t.x, t.y), isoY(t.x, t.y));
       t.sp.zIndex = t.x + t.y + 1.2;
     }
   }
 
-  /**
-   * Turnaround life around parked aircraft: belt loader and baggage train at the
-   * forward hold, catering at the rear service door, a fuel truck by the engine,
-   * cones, ground crew, and the pushback tug near departure. Purely visual.
-   */
   private syncService(s: GameState, dtReal: number): void {
     // key -> final sprite and spot; vehicles that drive also carry their approach path
     const want = new Map<string, { sprite: string; x: number; y: number; base?: string; path?: [number, number][] }>();

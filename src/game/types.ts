@@ -6,7 +6,7 @@ export type TileType = (typeof T)[keyof typeof T];
 export type ModuleKind =
   | 'runway' | 'tower' | 'stand_s' | 'stand_m' | 'stand_l' | 'stand_xl'
   | 'entrance' | 'exit' | 'checkin' | 'security' | 'gate' | 'food' | 'shop' | 'toilets' | 'seats' | 'baggage'
-  | 'carpark' | 'tree' | 'bagsort';
+  | 'carpark' | 'tree' | 'bagsort' | 'busgate' | 'passport';
 
 export type PaintKind = 'taxiway' | 'floor' | 'apron' | 'barrier';
 
@@ -19,6 +19,7 @@ export interface Building {
   h: number;
   rot: 0 | 1 | 2 | 3;
   link?: number; // gate ↔ stand
+  zone?: 'swing' | 'schengen' | 'border'; // gates: which flights may use it (default swing)
 }
 
 export type Phase = 'scheduled' | 'approach' | 'landing' | 'taxi_in' | 'parking' | 'parked' | 'pushback' | 'taxi_out' | 'lineup' | 'takeoff' | 'departed' | 'cancelled';
@@ -59,6 +60,7 @@ export interface Flight {
   facing: 0 | 1 | 2 | 3;
   speed: number; // tiles per game minute
   waitUntil: number; // earliest pushback (no-show passengers' bags being offloaded)
+  onStand?: number; // minute the aircraft parked
 }
 
 export interface Contract {
@@ -80,7 +82,7 @@ export interface Offer extends Omit<Contract, 'id' | 'since' | 'happiness'> {
 }
 
 export type PaxState =
-  | 'toCheckin' | 'queue' | 'service' | 'toSecurity' | 'toNeed' | 'atNeed' | 'toGate' | 'atGate' | 'boarding'
+  | 'toCheckin' | 'queue' | 'service' | 'toSecurity' | 'toPassport' | 'toNeed' | 'atNeed' | 'toGate' | 'atGate' | 'boarding'
   | 'deplaning' | 'toBaggage' | 'atBaggage' | 'toExit' | 'lost';
 
 export interface Pax {
@@ -88,7 +90,7 @@ export interface Pax {
   flight: number;
   dep: boolean;
   state: PaxState;
-  stage: 'checkin' | 'security' | 'need' | 'gate' | 'baggage' | 'exit';
+  stage: 'checkin' | 'security' | 'passport' | 'need' | 'gate' | 'baggage' | 'exit';
   target: number; // building id (flow field key)
   x: number;
   y: number;
@@ -104,6 +106,7 @@ export interface Pax {
   waited: number; // minutes queuing
   bags: number; // checked bags (departing) or bags to collect (arriving)
   bagAt: number; // arriving: the flight's delivered-bag count at which this passenger's last bag is on the belt
+  cleared?: boolean; // through passport control (border flights only)
 }
 
 export interface Ledger {
@@ -168,6 +171,15 @@ export interface GameState {
   staff: Record<Role, number>; // people hired per role
   curfew: Curfew;
   goodwill: number; // 0..100, how the neighbours feel about the airport (night noise)
+}
+
+/**
+ * When the flight can actually leave: its scheduled time, or 25 minutes after a
+ * late aircraft reaches the stand. Boarding, gate close and the longest wait all
+ * count from here, so passengers aren't blamed for a late aircraft.
+ */
+export function readyAt(f: Flight): number {
+  return f.onStand === undefined ? f.dep : Math.max(f.dep, f.onStand + 25);
 }
 
 export function emptyLedger(): Ledger {

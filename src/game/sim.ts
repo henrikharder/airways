@@ -2,6 +2,7 @@
 
 import { FEES, MODULES, NIGHT } from './catalog';
 import { updateBaggage } from './baggage';
+import { borderDaily } from './border';
 import { inNight, nightDaily, nightMovement } from './night';
 import { wagesPerDay } from './staff';
 import { weeklyMeeting } from './board';
@@ -111,6 +112,7 @@ function newDay(s: GameState, day: number): void {
       : 'Aviation authority fine: arriving passengers have no way out. Add an arrivals exit in the security barrier.', 'bad');
   }
   nightDaily(s);
+  borderDaily(s);
   for (const c of s.contracts) scheduleContract(s, c, day);
   s.scheduledDay = day;
   allocateStands(s);

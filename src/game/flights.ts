@@ -7,9 +7,11 @@ import { BAGS, FEES, NIGHT, standClassFor, standFits, turnaroundMin } from './ca
 import { drivable, getLayout, idx, layoutStamp, runwayLine, standPoints } from './grid';
 import { aircraftPath, simplify } from './paths';
 import type { Building, Contract, Flight, GameState } from './types';
+import { readyAt } from './types';
 import { T } from './types';
 import { addNews } from './news';
 import { curfewBlocks } from './night';
+import { gateAllows } from './border';
 
 const DAY = 1440;
 const TAXI = 14; // tiles per game minute
@@ -172,8 +174,10 @@ export function allocateStands(s: GameState): void {
     .sort((a, b) => Number(!!b.link) - Number(!!a.link) || a.w - b.w);
   const busy = (st: number, a: number, d: number, self: number) =>
     s.flights.some((f) => f.id !== self && f.stand === st && f.phase !== 'cancelled' && f.phase !== 'departed' && f.arr - 15 < d && f.dep + 15 > a);
+  const L = getLayout(s);
   for (const f of s.flights.filter((x) => x.phase === 'scheduled' && x.stand === null).sort((a, b) => a.arr - b.arr)) {
-    const st = stands.find((b) => standFits(b.kind, f.typeId) && !busy(b.id, f.arr, f.dep, f.id));
+    // the stand's gate must accept this flight (Schengen / non-Schengen zoning); remote stands take anyone
+    const st = stands.find((b) => standFits(b.kind, f.typeId) && gateAllows(s, b.link ? L.byId.get(b.link) : undefined, f) && !busy(b.id, f.arr, f.dep, f.id));
     if (st) f.stand = st.id;
   }
 }
@@ -335,13 +339,15 @@ export function updateFlight(s: GameState, f: Flight, dt: number, onDepart: (f: 
         f.facing = facingTo(...front[st.rot]);
         f.phase = 'parked';
         f.waitUntil = now;
+        f.onStand = now;
       }
       return;
     }
     case 'parked': {
       const boardingDone = f.boarded + f.missed >= f.paxOut;
       const bagsDone = f.bagsLoaded >= f.bagsChecked - 0.5 && f.bagsUnloaded >= f.bagsIn - 0.5;
-      if (now >= f.dep && now >= f.waitUntil && ((boardingDone && bagsDone) || now >= f.dep + BAGS.maxWait)) {
+      const ready = readyAt(f);
+      if (now >= ready && now >= f.waitUntil && ((boardingDone && bagsDone) || now >= ready + BAGS.maxWait)) {
         f.delayed = Math.max(0, Math.round(now - f.dep));
         if (!bagsDone) f.bagsLeft = Math.round(Math.max(0, f.bagsChecked - f.bagsLoaded));
         const st = L.byId.get(f.stand!)!;

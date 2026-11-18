@@ -29,7 +29,7 @@ export function curfewBlocks(s: GameState, minute: number): boolean {
 
 /** A night movement (landing or take-off) annoys the neighbours, heavier jets more. */
 export function nightMovement(s: GameState, f: Flight): void {
-  s.goodwill = Math.max(0, s.goodwill - (0.6 + acType(f.typeId).mtowT / 400));
+  s.goodwill = Math.max(0, s.goodwill - (0.25 + acType(f.typeId).mtowT / 600));
 }
 
 /** Construction cost multiplier for airside expansion while goodwill is low. */

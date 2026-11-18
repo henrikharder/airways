@@ -37,15 +37,23 @@ export function buildExpanded(s: GameState): string[] {
   put('stand_l', 43, 38);
   for (const x of [58, 69, 80]) put('stand_m', x, 42);
   for (const x of [91, 99]) put('stand_s', x, 44);
+  put('stand_m', 47, 19); // remote stands between the taxiways, served by bus
+  put('stand_m', 58, 19);
   put('bagsort', 40, 27);
   put('bagsort', 80, 27);
 
   // terminal: airside in the north half, landside in the south
   paintRect(s, 'floor', 8, 52, 105, 79);
   for (const x of [15, 33, 48, 61, 72, 83, 93, 101]) put('gate', x, 52);
-  put('toilets', 12, 57); put('food', 24, 57); put('toilets', 29, 57); put('shop', 38, 57);
-  put('seats', 43, 58); put('seats', 46, 58); put('shop', 52, 57); put('food', 62, 57);
-  put('toilets', 67, 57); put('shop', 74, 57); put('seats', 84, 58); put('seats', 87, 58); put('food', 94, 57);
+  put('busgate', 24, 52);
+  // west gates for non-Schengen flights (UK, Ireland, Gulf, Turkey), east gates Schengen
+  for (const b of s.buildings) {
+    if (b.kind !== 'gate') continue;
+    b.zone = b.x <= 61 ? 'border' : 'schengen';
+  }
+  put('toilets', 12, 57); put('passport', 19, 57); put('food', 24, 57); put('toilets', 29, 57); put('passport', 33, 57); put('shop', 38, 57);
+  put('seats', 43, 58); put('seats', 46, 58); put('shop', 52, 57); put('passport', 57, 57); put('food', 62, 57);
+  put('toilets', 67, 57); put('passport', 70, 57); put('shop', 74, 57); put('seats', 84, 58); put('seats', 87, 58); put('food', 94, 57);
   for (const x of [41, 44, 47, 50, 53, 56, 59, 62]) put('security', x, 62);
   paintRect(s, 'barrier', 8, 63, 105, 63);
   put('exit', 20, 63);
@@ -62,6 +70,7 @@ export function buildExpanded(s: GameState): string[] {
     ['SK', 'A20N', 'OSL', 3, false], ['BA', 'A20N', 'LHR', 3, false], ['LH', 'A20N', 'FRA', 3, false],
     ['AF', 'A20N', 'CDG', 2, false], ['KL', 'B738', 'AMS', 2, false], ['FR', 'B38M', 'STN', 2, false],
     ['KL', 'E295', 'AMS', 2, false], ['AF', 'BCS3', 'CDG', 2, false],
+    ['LH', 'A20N', 'MUC', 3, false], ['SK', 'A20N', 'ARN', 3, false], ['U2', 'A20N', 'LGW', 3, false], ['FR', 'B38M', 'MAN', 3, false],
     ['FR', 'B38M', 'DUB', 1, true], ['U2', 'A20N', 'GVA', 1, true],
   ];
   for (const [airline, typeId, dest, perDay, night] of deals) {

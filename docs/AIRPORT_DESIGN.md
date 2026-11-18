@@ -77,6 +77,9 @@ Board: weekly objectives with cash bonuses and confidence (carried over).
 - **Night operations.** Airlines offer red-eye rotations at a landing-fee premium. Night movements cost the neighbours' goodwill, which recovers daily (faster under a curfew). Low goodwill makes airside permits expensive; very low goodwill brings an imposed curfew.
 - **Gate close.** Gates close 10 minutes before departure; no-shows are offloaded and their bags removed, which can delay pushback.
 - **Timetables.** Each contract flies a fixed daily timetable, spread through the day.
+- **Ready time.** A late aircraft can leave no earlier than 25 minutes after reaching the stand; boarding, gate close and the longest wait count from that time.
+- **Remote stands.** A stand with no gate in reach is remote: passengers wait at a bus gate and ride apron buses (two per bus gate, 50 seats). Slower and less liked than a jet bridge, but remote stands can go anywhere on the apron.
+- **Borders.** Flights outside Schengen (or domestic) need passport control: departing passengers after security, arriving ones before baggage claim. Gates are swing, Schengen-only or non-Schengen-only, and stand allocation respects the zones. Without passport control the border police fine you daily.
 
 ## Later
-Transfers, lounges, passport control, multiple terminals and floors, rotating camera.
+Transfers, lounges, separate arrival and departure passport halls with e-gates, multiple terminals and floors, rotating camera.

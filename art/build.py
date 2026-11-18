@@ -819,6 +819,63 @@ def jb_rotunda(b):
     smooth(b.cyl(0, 0, 0.88, 0.91, 0.315, mat(C['accent'], 0.4), 32))
 
 
+def m_passport(b):
+    """Passport control (3×3): three glass booths with officers, a sign gantry, and a queue lane in front (+gy)."""
+    b.box(0.05, 0.1, 0, 2.95, 1.6, 0.012, mat('#55657f', 0.95))
+    for k in range(3):
+        x0 = 0.15 + k * 0.95
+        b.box(x0, 0.6, 0, x0 + 0.7, 1.15, 0.3, mat('#e5e7eb', 0.35), 0.03)  # booth base
+        b.box(x0, 0.6, 0.3, x0 + 0.7, 1.15, 0.62, mat(C['glass'], 0.05))  # glass cabin
+        b.box(x0 - 0.02, 0.58, 0.62, x0 + 0.72, 1.17, 0.66, mat('#1e3a8a', 0.4))
+        b.box(x0 + 0.06, 1.13, 0.22, x0 + 0.64, 1.2, 0.26, mat('#d6dbe3', 0.3))  # passport counter
+        b.box(x0 + 0.5, 1.12, 0.3, x0 + 0.62, 1.14, 0.38, mat('#22c55e', 0.3, 1.5))  # go light
+        staff(b, x0 + 0.35, 0.82, 1, '#1e3a8a')
+        b.box(x0 + 0.7, 0.4, 0, x0 + 0.78, 1.3, 0.3, mat('#94a3b8', 0.3))  # lane divider
+    # sign gantry
+    for x in (0.05, 2.87):
+        b.box(x, 0.2, 0, x + 0.08, 0.28, 1.05, mat('#2b3240', 0.4))
+    b.box(0.0, 0.18, 0.88, 2.95, 0.3, 1.08, mat('#1e3a8a', 0.4), 0.02)
+    b.box(0.25, 0.3, 0.92, 0.5, 0.305, 1.04, mat('#ffcc00', 0.4, 0.8))
+    for k in range(7):
+        b.box(0.62 + k * 0.28, 0.3, 0.95, 0.8 + k * 0.28, 0.305, 1.01, mat('#f8fafc', 0.3, 0.8))
+    # queue lane posts and belts towards the front
+    for x in (0.4, 1.5, 2.6):
+        stanchion(b, x, 2.2)
+        stanchion(b, x, 2.85)
+    belt(b, 0.4, 2.2, 2.6, 2.2)
+    belt(b, 0.4, 2.85, 2.6, 2.85)
+
+
+def m_busgate(b):
+    """Bus gate (4×3): lounge for remote stands, glass apron doors on the airside face (-gy)."""
+    b.box(0.08, 0.5, 0, 3.92, 2.92, 0.012, mat('#55657f', 0.95))
+    seat_row(b, 0.4, 1.35, 8, '#14b8a6', -1, bags=(3,))
+    seat_row(b, 0.4, 2.3, 8, '#14b8a6', -1, bags=(6,))
+    # glass apron wall with two sliding door pairs
+    b.box(0.0, 0.0, 0, 4.0, 0.08, 0.9, mat(C['glass'], 0.05))
+    for x in (0.0, 1.96, 3.92):
+        b.box(x, 0.0, 0, x + 0.08, 0.1, 0.92, mat('#2b3240', 0.4))
+    b.box(0.0, 0.0, 0.88, 4.0, 0.1, 0.95, mat('#2b3240', 0.4))
+    for x in (0.55, 2.55):
+        b.box(x, 0.06, 0.0, x + 0.9, 0.12, 0.8, mat('#cfe8f7', 0.05))
+        b.box(x - 0.02, 0.1, 0.8, x + 0.92, 0.14, 0.86, mat('#22c55e', 0.3, 1.0))
+    # bus sign column and boarding desk with a queue lane
+    b.box(3.55, 0.35, 0, 3.65, 0.45, 1.0, mat('#2b3240', 0.4))
+    b.box(3.25, 0.3, 0.78, 3.95, 0.48, 1.06, mat('#ffcc00', 0.4), 0.02)
+    b.box(3.35, 0.48, 0.84, 3.6, 0.485, 1.0, mat('#111111'))  # bus pictogram plate
+    b.box(3.4, 0.485, 0.86, 3.55, 0.49, 0.95, mat('#ffcc00', 0.4))
+    b.box(3.65, 0.48, 0.86, 3.88, 0.485, 0.98, mat('#111111'))
+    b.box(0.25, 0.25, 0, 1.1, 0.55, 0.26, mat(C['white'], 0.35), 0.03)
+    b.box(0.23, 0.23, 0.26, 1.12, 0.57, 0.28, mat('#d6dbe3', 0.3))
+    b.box(0.4, 0.3, 0.28, 0.62, 0.32, 0.42, mat('#1f2530', 0.3))
+    b.box(0.42, 0.32, 0.3, 0.6, 0.325, 0.4, mat('#93c5fd', 0.3, 0.8))
+    for x in (1.3, 1.9):
+        stanchion(b, x, 0.7)
+    belt(b, 1.3, 0.7, 1.9, 0.7)
+    screen(b, 2.1, 0.14, 0.55, 3.0, 0.82, '#fbbf24')
+    plant(b, 3.7, 2.7)
+
+
 def m_bagsort(b):
     """Baggage hall (6×4): clad shed, roller doors on the apron side (+gy), conveyor bridge to the terminal."""
     clad = mat('#d6dbe2', 0.55)
@@ -864,7 +921,7 @@ def m_bagsort(b):
 MODULES = {
     'checkin': (4, 2, m_checkin), 'security': (2, 4, m_security), 'gate': (4, 4, m_gate), 'food': (4, 4, m_food),
     'shop': (3, 3, m_shop), 'toilets': (2, 2, m_toilets), 'seats': (2, 1, m_seats), 'baggage': (3, 4, m_baggage),
-    'entrance': (2, 1, m_entrance), 'bagsort': (6, 4, m_bagsort), 'exit': (2, 1, m_exit), 'tower': (3, 3, m_tower), 'tree': (1, 1, m_tree)
+    'entrance': (2, 1, m_entrance), 'bagsort': (6, 4, m_bagsort), 'busgate': (4, 3, m_busgate), 'passport': (3, 3, m_passport), 'exit': (2, 1, m_exit), 'tower': (3, 3, m_tower), 'tree': (1, 1, m_tree)
 }
 
 # ---------------------------------------------------------------- aircraft (real dimensions, metres)

@@ -7,7 +7,10 @@ import { aircraftPath, distanceTo, UNREACHABLE } from './paths';
 import { securityReport } from './security';
 import { advance } from './sim';
 import { inNight, setCurfew } from './night';
-import { needed, openServers } from './staff';
+import { needed, openServers, staffToNeed } from './staff';
+import { isRemote } from './buses';
+import { crossesBorder, isBorder } from './border';
+import { expandedGame } from './expanded';
 import { serviceStats } from './passengers';
 import type { Flight } from './types';
 
@@ -160,5 +163,62 @@ describe('night operations', () => {
     expect(s.contracts.some((c) => c.night)).toBe(false);
     s.offers.push({ id: ++s.nextId, airline: 'FR', dest: 'STN', typeId: 'B38M', perDay: 1, load: 0.85, expires: 9, minRating: 0, night: true });
     expect(acceptOffer(s, s.nextId)).not.toBeNull();
+  });
+});
+
+describe('remote stands', () => {
+  it('boards remote stands by apron bus from a bus gate', () => {
+    const s = demoGame();
+    paintRect(s, 'taxiway', 52, 18, 62, 18);
+    expect(place(s, 'stand_m', 52, 19, 0).ok).toBe(true);
+    expect(place(s, 'busgate', 38, 52, 0).ok).toBe(true);
+    const remote = s.buildings.find((b) => b.kind === 'stand_m' && b.x === 52 && b.y === 19)!;
+    expect(remote.link).toBeUndefined();
+    // close the contact stands so everything goes remote
+    for (const b of s.buildings.filter((x) => x.kind === 'stand_m' && x.id !== remote.id)) bulldozeAt(s, b.x + 1, b.y + 1);
+    for (const f of s.flights) if (f.phase === 'scheduled') f.stand = null;
+    staffToNeed(s);
+    const done = new Map<number, Flight>();
+    for (let m = 0; m < 20 * 60; m += 10) {
+      advance(s, 10);
+      for (const f of s.flights) if (f.phase === 'departed') done.set(f.id, f);
+    }
+    const fs = [...done.values()].filter((f) => f.stand === remote.id);
+    expect(fs.length).toBeGreaterThan(0);
+    for (const f of fs) expect(f.boarded).toBeGreaterThan(f.paxOut * 0.8);
+    expect(isRemote(s, { ...fs[0], phase: 'parked' })).toBe(true);
+  });
+});
+
+describe('borders', () => {
+  it('knows which routes cross a border', () => {
+    expect(crossesBorder('CPH', 'LHR')).toBe(true);
+    expect(crossesBorder('CPH', 'DUB')).toBe(true);
+    expect(crossesBorder('CPH', 'OSL')).toBe(false);
+    expect(crossesBorder('CPH', 'GVA')).toBe(false);
+    expect(crossesBorder('LHR', 'MAN')).toBe(false);
+  });
+
+  it('sends non-Schengen passengers through passport control, and fines airports without it', () => {
+    const s = demoGame();
+    const pc = s.buildings.find((b) => b.kind === 'passport')!;
+    let served = 0;
+    for (let m = 0; m < 14 * 60; m += 10) { advance(s, 10); served = Math.max(served, serviceStats(pc.id, s.minute).perHour); }
+    expect(served).toBeGreaterThan(0);
+    bulldozeAt(s, pc.x, pc.y);
+    advance(s, 36 * 60);
+    expect(s.news.some((n) => n.text.startsWith('Border police fine'))).toBe(true);
+  });
+
+  it('keeps non-Schengen flights away from Schengen-only gates', () => {
+    const s = expandedGame();
+    const L = new Map(s.buildings.map((b) => [b.id, b]));
+    for (const f of s.flights) {
+      if (f.stand === null) continue;
+      const st = L.get(f.stand)!;
+      const gate = st.link ? L.get(st.link) : undefined;
+      if (isBorder(s, f)) expect(gate?.zone).not.toBe('schengen');
+      else expect(gate?.zone).not.toBe('border');
+    }
   });
 });
