@@ -29,6 +29,7 @@ import { Scene, type Badge, type Ghost } from '../render/scene';
 import { boardShell, gateLabel, statusOf, updateBoards } from './departures';
 import { clock, esc, money, num } from './format';
 import { icon, logoMark, type IconName } from './icons';
+import { patchHTML } from './patch';
 
 type Tool = { t: 'select' } | { t: 'build'; kind: ModuleKind } | { t: 'paint'; paint: PaintKind } | { t: 'bulldoze' };
 type Tab = 'airport' | 'airlines' | 'flights' | 'ops' | 'money';
@@ -491,7 +492,7 @@ export class Game {
     const day = Math.floor(s.minute / 1440) + 1;
     const prog = progress(s);
     const net = income(s.today) - s.today.upkeep;
-    this.$('#topbar').innerHTML = `
+    patchHTML(this.$('#topbar'), `
       <div class="brand">${logoMark()}<span>${esc(s.name)}</span><span class="code">${esc(s.code)}</span></div>
       <div class="stat"><span>Cash</span><b class="${s.cash < 0 ? 'neg' : ''}">${money(s.cash)}</b></div>
       <div class="stat hide-sm"><span>Today</span><b class="${net < 0 ? 'neg' : 'pos'}">${net >= 0 ? '+' : ''}${money(net)}</b></div>
@@ -501,7 +502,7 @@ export class Game {
       <div class="spacer"></div>
       <div class="clock"><span>Day ${day}</span><b>${clock(s.minute)}</b></div>
       <div class="speed">${SPEED_LABEL.map((l, i) => `<button class="${this.speed === i ? 'on' : ''}" data-act="speed" data-speed="${i}" title="${i ? `Speed ${i}` : 'Pause (Space)'}">${i ? l : icon('pause')}</button>`).join('')}</div>
-      <button class="icon" data-act="menu" data-page="main" title="Menu (Esc)">${icon('menu')}</button>`;
+      <button class="icon" data-act="menu" data-page="main" title="Menu (Esc)">${icon('menu')}</button>`);
   }
 
   private renderPalette(): void {
