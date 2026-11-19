@@ -608,7 +608,7 @@ export class Game {
   private renderPanel(): void {
     if (!this.s) return;
     const tabs: [Tab, string][] = [['airport', 'Airport'], ['airlines', 'Airlines'], ['flights', 'Flights'], ['ops', 'Ops'], ['money', 'Money']];
-    this.$('#tabs').innerHTML = tabs.map(([k, l]) => `<button class="${!this.selected && this.tab === k ? 'on' : ''}" data-act="tab" data-tab="${k}">${l}${k === 'airlines' && this.s.offers.length ? `<span class="badge-n">${this.s.offers.length}</span>` : ''}</button>`).join('');
+    patchHTML(this.$('#tabs'), tabs.map(([k, l]) => `<button class="${!this.selected && this.tab === k ? 'on' : ''}" data-act="tab" data-tab="${k}">${l}${k === 'airlines' && this.s.offers.length ? `<span class="badge-n">${this.s.offers.length}</span>` : ''}</button>`).join(''));
     const view = this.$('#view');
     const scroll = view.scrollTop;
     const wasBoard = view.querySelector('[data-board]');
@@ -625,9 +625,9 @@ export class Game {
       const tmp = document.createElement('div');
       tmp.innerHTML = html;
       const nrest = tmp.querySelector('[data-rest]');
-      if (rest && nrest) { rest.replaceWith(nrest); return; }
+      if (rest && nrest) { patchHTML(rest, nrest.innerHTML); return; }
     }
-    view.innerHTML = html;
+    patchHTML(view, html);
     view.scrollTop = scroll;
     updateBoards(view, this.s);
   }
