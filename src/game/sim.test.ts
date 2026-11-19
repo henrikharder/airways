@@ -5,7 +5,7 @@ import { accessTile, bulldozeAt, checkPlace, drivable, paintRect, place, walkabl
 import { gateName } from './terminals';
 import { scenarioProgress, SCENARIOS, startScenario } from './scenarios';
 import { createGame } from './newgame';
-import { aircraftPath, distanceTo, UNREACHABLE } from './paths';
+import { aircraftPath, distanceTo, nextStep, UNREACHABLE } from './paths';
 import { securityReport } from './security';
 import { advance } from './sim';
 import { inNight, setCurfew } from './night';
@@ -304,10 +304,45 @@ describe('scenarios', () => {
       startScenario(s, sc.id);
       expect(s.scenario?.id).toBe(sc.id);
       if (sc.goal) {
-        expect(s.contracts.length).toBeGreaterThan(0);
+        if (s.buildings.some((b) => b.kind === 'runway')) expect(s.contracts.length).toBeGreaterThan(0); // a working airport
         advance(s, 24 * 60);
         expect(scenarioProgress(s)!.value).toBeGreaterThanOrEqual(0);
       }
     }
+  });
+});
+
+describe('people mover', () => {
+  it('lets passengers ride between distant stations when it beats walking', () => {
+    const s = createGame({ name: 'T', code: 'TST', city: 'CPH' });
+    s.cash = 80e6;
+    paintRect(s, 'floor', 5, 60, 14, 69);
+    paintRect(s, 'floor', 85, 60, 94, 69);
+    paintRect(s, 'skywalk', 15, 64, 84, 64); // a 70-tile walk between the two
+    expect(place(s, 'gate', 88, 60, 0).ok).toBe(true);
+    const gate = s.buildings.find((b) => b.kind === 'gate')!;
+    const walking = distanceTo(s, gate, 7.5, 66.5);
+    expect(walking).toBeLessThan(UNREACHABLE);
+    expect(place(s, 'station', 6, 62, 0).ok).toBe(true);
+    expect(place(s, 'station', 88, 65, 0).ok).toBe(true);
+    const riding = distanceTo(s, gate, 7.5, 66.5);
+    expect(riding).toBeLessThan(walking * 0.6);
+    // a passenger following the field boards the train at the platform door
+    const st = s.buildings.find((b) => b.kind === 'station' && b.x === 6)!;
+    const [ax, ay] = accessTile(st);
+    const next = nextStep(s, gate, ax + 0.5, ay + 0.5);
+    expect(next && Math.abs(next[0] - ax) + Math.abs(next[1] - ay)).toBeGreaterThan(1);
+  });
+});
+
+describe('milestones', () => {
+  it('unlocks milestones as the airport grows', () => {
+    const s = expandedGame();
+    advance(s, 26 * 60);
+    expect(s.milestones).toContain('first');
+    expect(s.milestones).toContain('widebody');
+    expect(s.milestones).toContain('a380');
+    expect(s.milestones).toContain('runways2');
+    expect(s.totals!.departures).toBeGreaterThan(20);
   });
 });

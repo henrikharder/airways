@@ -4,6 +4,7 @@
 
 import { accessTile, drivable, idx, inside, layoutStamp, walkable } from './grid';
 import type { Building, GameState } from './types';
+import { trainNetwork } from './train';
 
 export const UNREACHABLE = 0x7fff;
 
@@ -22,21 +23,29 @@ export function fieldFor(s: GameState, b: Building, arriving = false): Int16Arra
   const dist = new Int16Array(s.W * s.H).fill(UNREACHABLE);
   const [ax, ay] = accessTile(b);
   if (inside(s, ax, ay)) {
-    const q = new Int32Array(s.W * s.H);
-    let head = 0, tail = 0;
+    // Dial's algorithm: walking steps cost 1, train rides cost the tiles walkable in the same time
+    const rides = trainNetwork(s).links;
+    const buckets: number[][] = [[idx(s, ax, ay)]];
     dist[idx(s, ax, ay)] = 0;
-    q[tail++] = idx(s, ax, ay);
-    while (head < tail) {
-      const i = q[head++];
-      const x = i % s.W;
-      const y = (i - x) / s.W;
-      const d = dist[i] + 1;
-      for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
-        if (!walkable(s, nx, ny, arriving)) continue;
-        const j = idx(s, nx, ny);
-        if (dist[j] <= d) continue;
-        dist[j] = d;
-        q[tail++] = j;
+    const relax = (j: number, d: number) => {
+      if (d >= dist[j] || d >= UNREACHABLE) return;
+      dist[j] = d;
+      (buckets[d] ??= []).push(j);
+    };
+    for (let d = 0; d < buckets.length; d++) {
+      const list = buckets[d];
+      if (!list) continue;
+      for (const i of list) {
+        if (dist[i] !== d) continue; // superseded
+        const x = i % s.W;
+        const y = (i - x) / s.W;
+        for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+          if (walkable(s, nx, ny, arriving)) relax(idx(s, nx, ny), d + 1);
+        }
+        for (const r of rides.get(i) ?? []) {
+          const tx = r.to % s.W, ty = (r.to - tx) / s.W;
+          if (walkable(s, tx, ty, arriving)) relax(r.to, d + r.cost);
+        }
       }
     }
   }
@@ -56,14 +65,19 @@ export function nextStep(s: GameState, b: Building, x: number, y: number, arrivi
   const ty = Math.floor(y);
   const here = inside(s, tx, ty) ? f[idx(s, tx, ty)] : UNREACHABLE;
   if (here === 0) return null;
+  // the move that keeps us on a shortest route: a step to a neighbour, or a train ride from a platform door
   let best: [number, number] | null = null;
-  let bd = here;
+  let bd = here + 1;
   for (const [nx, ny] of [[tx + 1, ty], [tx - 1, ty], [tx, ty + 1], [tx, ty - 1]]) {
     if (!inside(s, nx, ny)) continue;
-    const d = f[idx(s, nx, ny)];
+    const d = f[idx(s, nx, ny)] + 1;
     if (d < bd) { bd = d; best = [nx, ny]; }
   }
-  return best;
+  for (const r of inside(s, tx, ty) ? trainNetwork(s).links.get(idx(s, tx, ty)) ?? [] : []) {
+    const d = f[r.to] + r.cost;
+    if (d < bd) { bd = d; best = [r.to % s.W, Math.floor(r.to / s.W)]; }
+  }
+  return best && bd <= here ? best : null;
 }
 
 /** A* over drivable tiles; returns tile centres from start to goal, or null. */

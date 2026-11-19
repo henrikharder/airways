@@ -820,6 +820,47 @@ def jb_rotunda(b):
     smooth(b.cyl(0, 0, 0.88, 0.91, 0.315, mat(C['accent'], 0.4), 32))
 
 
+def m_station(b):
+    """People mover station (3×3): platform with screen doors, an escalator, and a train sign; entry from the front (+gy)."""
+    b.box(0.05, 0.05, 0, 2.95, 2.95, 0.012, mat('#55657f', 0.95))
+    # platform screen doors along the back, train beyond
+    b.box(0.1, 0.1, 0, 2.9, 0.35, 0.18, mat('#94a3b8', 0.4), 0.02)
+    for k in range(4):
+        x = 0.2 + k * 0.68
+        b.box(x, 0.33, 0.18, x + 0.58, 0.37, 0.72, mat(C['glass'], 0.05))
+        b.box(x + 0.25, 0.37, 0.62, x + 0.33, 0.38, 0.68, mat('#22c55e', 0.3, 1.5))
+    b.box(0.1, 0.3, 0.72, 2.9, 0.4, 0.8, mat('#2b3240', 0.4))
+    # escalator going up to the platform
+    b.rbox(2.2, 1.8, 0.3, 1.3, 0.5, 0.08, -25, mat('#475569', 0.4))
+    for side in (1.53, 2.07):
+        b.rbox(2.2, side, 0.42, 1.3, 0.04, 0.16, -25, mat(C['glass'], 0.05))
+    # benches and a sign column
+    b.box(0.3, 1.2, 0, 1.4, 1.45, 0.16, mat(C['wood'], 0.5), 0.02)
+    b.box(0.2, 2.5, 0, 0.3, 2.6, 0.95, mat('#2b3240', 0.4))
+    b.box(0.0, 2.45, 0.75, 0.9, 2.65, 1.0, mat('#ffcc00', 0.4), 0.02)
+    b.box(0.08, 2.65, 0.8, 0.32, 2.655, 0.95, mat('#111111'))
+    b.box(0.42, 2.65, 0.84, 0.82, 2.655, 0.9, mat('#111111'))
+    plant(b, 2.7, 2.7)
+
+
+def build_train(facing):
+    """Two-car driverless people mover, facing +gx before rotation."""
+    b = Builder(1, 1, 0)
+    for k, x0 in enumerate((-1.62, 0.02)):
+        x1 = x0 + 1.58
+        b.box(x0, -0.24, 0.08, x1, 0.24, 0.62, mat('#f1f5f9', 0.35), 0.06)
+        b.box(x0 + 0.08, -0.245, 0.3, x1 - 0.08, 0.245, 0.5, mat('#1e293b', 0.1))  # window band
+        b.box(x0, -0.246, 0.12, x1, 0.246, 0.18, mat('#2f7de1', 0.4))
+        for dx in (0.35, 1.1):
+            b.box(x0 + dx, -0.25, 0.14, x0 + dx + 0.18, -0.245, 0.52, mat('#cbd5e1', 0.4))  # doors
+        for dx in (0.3, x1 - x0 - 0.3):
+            b.box(x0 + dx - 0.1, -0.2, 0.0, x0 + dx + 0.1, 0.2, 0.08, mat('#1f2328', 0.8))  # bogies
+    b.box(1.58, -0.18, 0.32, 1.61, 0.18, 0.55, mat('#1e293b', 0.1))  # front window
+    b.box(1.6, -0.15, 0.18, 1.61, -0.08, 0.22, mat('#fff7d6', 0.2, 4.0))
+    b.box(1.6, 0.08, 0.18, 1.61, 0.15, 0.22, mat('#fff7d6', 0.2, 4.0))
+    return b.turn(facing)
+
+
 def m_egates(b):
     """E-gates (3×2): four automated passport gates with glass flaps and face cameras; queue in front (+gy)."""
     b.box(0.05, 0.1, 0, 2.95, 1.9, 0.012, mat('#55657f', 0.95))
@@ -997,7 +1038,7 @@ def m_bagsort(b):
 MODULES = {
     'checkin': (4, 2, m_checkin), 'security': (2, 4, m_security), 'gate': (4, 4, m_gate), 'food': (4, 4, m_food),
     'shop': (3, 3, m_shop), 'toilets': (2, 2, m_toilets), 'seats': (2, 1, m_seats), 'baggage': (3, 4, m_baggage),
-    'entrance': (2, 1, m_entrance), 'bagsort': (6, 4, m_bagsort), 'busgate': (4, 3, m_busgate), 'passport': (3, 3, m_passport), 'transfer': (3, 2, m_transfer), 'egates': (3, 2, m_egates), 'lounge': (5, 4, m_lounge), 'exit': (2, 1, m_exit), 'tower': (3, 3, m_tower), 'tree': (1, 1, m_tree)
+    'entrance': (2, 1, m_entrance), 'bagsort': (6, 4, m_bagsort), 'busgate': (4, 3, m_busgate), 'passport': (3, 3, m_passport), 'transfer': (3, 2, m_transfer), 'egates': (3, 2, m_egates), 'station': (3, 3, m_station), 'lounge': (5, 4, m_lounge), 'exit': (2, 1, m_exit), 'tower': (3, 3, m_tower), 'tree': (1, 1, m_tree)
 }
 
 # ---------------------------------------------------------------- aircraft (real dimensions, metres)
@@ -1571,6 +1612,10 @@ def main():
                 b = Builder(1, 1, 0)
                 fn(b)
                 render(key, b.turn(f))
+    for f in range(4):
+        if want(f'apm_{f}'):
+            clear_objects()
+            render(f'apm_{f}', build_train(f))
     if want('gse_cone'):
         clear_objects()
         b = Builder(1, 1, 0)

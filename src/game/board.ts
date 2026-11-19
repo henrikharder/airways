@@ -18,11 +18,13 @@ export function newObjective(s: GameState): Objective {
   if (airlines < 2) return { kind: 'airlines', target: 2, label: 'Sign contracts with 2 airlines', reward: Math.max(reward, 800_000) };
   const opts: Objective[] = [
     { kind: 'airlines', target: airlines + 1, label: `Sign a contract with ${airlines + 1} airlines`, reward },
-    { kind: 'flights', target: Math.max(6, Math.round(((w?.departures ?? 0) / 7) * 1.3)), label: '', reward },
-    { kind: 'pax', target: Math.max(4000, Math.round(((w?.passengers ?? 0) * 1.25) / 500) * 500), label: '', reward },
-    { kind: 'rating', target: Math.min(90, Math.max(60, Math.round(s.rating) + 5)), label: '', reward },
-    { kind: 'profit', target: Math.max(300_000, Math.round(((w ? profit(w) : 0) * 1.2) / 100_000) * 100_000), label: '', reward },
+    // growth the board can reasonably expect in a week: a few percent, not a quarter
+    { kind: 'flights', target: Math.max(6, Math.ceil(((w?.departures ?? 0) / 7) * 1.08)), label: '', reward },
+    { kind: 'pax', target: Math.max(4000, Math.round(((w?.passengers ?? 0) * 1.08) / 500) * 500), label: '', reward },
+    { kind: 'profit', target: Math.max(300_000, Math.round(((w ? profit(w) : 0) * 1.1) / 100_000) * 100_000), label: '', reward },
   ];
+  // a rating target only while there is room to improve (passengers rarely rate above the low 80s)
+  if (s.rating < 79) opts.push({ kind: 'rating', target: Math.min(82, Math.max(60, Math.round(s.rating) + 3)), label: '', reward });
   const o = opts[Math.floor(Math.random() * opts.length)];
   if (o.kind === 'flights') o.label = `Average ${o.target} departures a day this week`;
   if (o.kind === 'pax') o.label = `Handle ${o.target.toLocaleString('en-US')} passengers this week`;
@@ -57,7 +59,7 @@ export function weeklyMeeting(s: GameState): void {
     s.cash += done.reward;
     b.confidence = Math.min(100, b.confidence + 12);
   } else {
-    b.confidence = Math.max(0, b.confidence - 18);
+    b.confidence = Math.max(0, b.confidence - 12);
   }
   const next = newObjective(s);
   b.meeting = {

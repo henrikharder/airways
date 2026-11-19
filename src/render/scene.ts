@@ -5,15 +5,17 @@ import { Application, Assets, Container, Graphics, Matrix, Sprite, Text, Texture
 import manifest from '../generated/sprites.json';
 import { MODULES, spriteType } from '../game/catalog';
 import { airlineColor, runways } from '../game/flights';
-import { footprint, getLayout, idx, localPoint, standPoints } from '../game/grid';
+import { footprint, getLayout, idx, layoutStamp, localPoint, standPoints } from '../game/grid';
 import type { Building, GameState, ModuleKind } from '../game/types';
 import { T } from '../game/types';
 import { depth, dirToView, footprintView, isoX, isoY, screenToGrid, toView, towardsCamera, TH, TW, vface, view, vX, vY, ZPX } from './iso';
 import { CARPARK_ROWS, GroundLife } from './life';
 import { terminals } from '../game/terminals';
+import { trainNetwork } from '../game/train';
 import { Lights } from './lights';
 
 const SKYWALK_Z = 0.75; // deck height in tiles
+const GUIDE_Z = 1.25; // people mover guideway height in tiles
 
 /** The edge of a unit view tile facing view direction (dx, dy), as [a0, b0, a1, b1]. */
 function edgeInView(dx: number, dy: number): [number, number, number, number] {
@@ -73,6 +75,9 @@ export class Scene {
   private aircraftSprites = new Map<number, Container>();
   private skywalkGfx = new Map<number, Graphics>();
   private skywalkKey = '';
+  private guideKey = '';
+  private guideGfx: Graphics[] = [];
+  private trains: { sp: Sprite; path: [number, number][]; i: number; dir: 1 | -1; x: number; y: number; wait: number }[] = [];
   private life!: GroundLife;
   private paxSprites = new Map<number, Sprite>();
   private ghostSprite: Sprite | null = null;
@@ -443,6 +448,7 @@ export class Scene {
       }
       const tex = this.textures.get(key);
       if (tex && sp.texture !== tex) sp.texture = tex;
+      sp.visible = !p.ride; // riding the people mover
       // on a skywalk, passengers walk on the raised deck
       const up = walkTiles?.[Math.floor(p.y) * s.W + Math.floor(p.x)] ? SKYWALK_Z * ZPX : 0;
       sp.position.set(isoX(p.x, p.y), isoY(p.x, p.y) - up);
@@ -598,6 +604,74 @@ export class Scene {
     }
   }
 
+  /**
+   * People mover: an elevated guideway between consecutive stations (an L along
+   * x then y), one tile per drawing so it sorts against everything below it, and
+   * a two-car train shuttling along each section.
+   */
+  private syncTrains(s: GameState, dtReal: number): void {
+    const net = trainNetwork(s);
+    const key = `${layoutStamp()}:${net.stations.map((b) => b.id).join(',')}:${view.k}`;
+    if (key !== this.guideKey) {
+      this.guideKey = key;
+      for (const g of this.guideGfx) g.destroy();
+      for (const t of this.trains) t.sp.destroy();
+      this.guideGfx = [];
+      this.trains = [];
+      const done = new Set<string>();
+      const z = GUIDE_Z * ZPX;
+      for (const [from, rides] of net.links) for (const r of rides) {
+        const pair = [from, r.to].sort((a, b) => a - b).join('-');
+        if (done.has(pair)) continue;
+        done.add(pair);
+        const ax = from % s.W, ay = (from - ax) / s.W, bx = r.to % s.W, by = (r.to - bx) / s.W;
+        const tiles: [number, number][] = [];
+        for (let x = ax; x !== bx; x += Math.sign(bx - ax)) tiles.push([x, ay]);
+        const sy = Math.sign(by - ay);
+        for (let y = ay; ; y += sy) { tiles.push([bx, y]); if (y === by || sy === 0) break; }
+        tiles.forEach(([x, y], n) => {
+          const g = new Graphics();
+          const [vx, vy] = toView(x + 0.5, y + 0.5);
+          const P = (a: number, b: number, h: number) => [vX(vx + a, vy + b), vY(vx + a, vy + b) - h];
+          if (n % 3 === 0) g.poly([...P(-0.08, 0.08, 0), ...P(0.08, 0.08, 0), ...P(0.08, 0.08, z), ...P(-0.08, 0.08, z)]).fill({ color: 0xa3a9b3 }); // column
+          const w = 0.3;
+          g.poly([...P(-0.5, -w, z), ...P(0.5, -w, z), ...P(0.5, w, z), ...P(-0.5, w, z)]).fill({ color: 0xc9ccd2 }); // deck seen from above
+          g.poly([...P(-0.5, w, z - 4), ...P(0.5, w, z - 4), ...P(0.5, w, z), ...P(-0.5, w, z)]).fill({ color: 0x8f96a1 });
+          g.poly([...P(-w, -0.5, z), ...P(w, -0.5, z), ...P(w, 0.5, z), ...P(-w, 0.5, z)]).fill({ color: 0xc9ccd2 });
+          g.zIndex = depth(x + 0.5, y + 0.5) + 1.1;
+          this.objects.addChild(g);
+          this.guideGfx.push(g);
+        });
+        const path: [number, number][] = [[ax + 0.5, ay + 0.5], [bx + 0.5, ay + 0.5], [bx + 0.5, by + 0.5]];
+        const sp = this.makeSprite('apm_0');
+        this.objects.addChild(sp);
+        this.trains.push({ sp, path, i: 1, dir: 1, x: path[0][0], y: path[0][1], wait: 0 });
+      }
+    }
+    for (const t of this.trains) {
+      if (t.wait > 0) t.wait -= dtReal;
+      else {
+        let step = 7 * dtReal; // tiles per real second
+        while (step > 0) {
+          const [tx, ty] = t.path[t.i];
+          const dx = tx - t.x, dy = ty - t.y, d = Math.hypot(dx, dy);
+          if (d > 1e-3) {
+            const name = `apm_${vface(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 0 : 2) : dy > 0 ? 1 : 3)}`;
+            const tex = this.textures.get(name);
+            if (tex && t.sp.texture !== tex) { t.sp.texture = tex; const fr = FRAMES[name]; if (fr) t.sp.anchor.set(fr.ax / fr.w, fr.ay / fr.h); }
+          }
+          if (d > step) { t.x += (dx / d) * step; t.y += (dy / d) * step; break; }
+          t.x = tx; t.y = ty; step -= d;
+          const next = t.i + t.dir;
+          if (next < 0 || next >= t.path.length) { t.dir = t.dir === 1 ? -1 : 1; t.wait = 2; break; } // dwell at the station
+          t.i = next;
+        }
+      }
+      t.sp.position.set(isoX(t.x, t.y), isoY(t.x, t.y) - GUIDE_Z * ZPX);
+      t.sp.zIndex = depth(t.x, t.y) + 1.15;
+    }
+  }
+
   /** Turn the camera a quarter (+1 clockwise, -1 anticlockwise), keeping the same spot in the middle of the screen. */
   rotateView(s: GameState, step: 1 | -1): void {
     const w = this.app.screen.width, h = this.app.screen.height;
@@ -620,6 +694,7 @@ export class Scene {
     this.syncAircraft(s);
     this.life.update(s, dtReal);
     this.syncSkywalks(s);
+    this.syncTrains(s, dtReal);
     this.syncPax(s, dtReal);
     this.drawOverlay(s, ghost, hover, selected);
     this.placeLabels();

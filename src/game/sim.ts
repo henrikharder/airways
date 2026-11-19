@@ -4,6 +4,7 @@ import { FEES, MODULES, NIGHT } from './catalog';
 import { updateBaggage } from './baggage';
 import { borderDaily } from './border';
 import { checkScenario } from './scenarios';
+import { checkMilestones } from './milestones';
 import { inNight, nightDaily, nightMovement } from './night';
 import { wagesPerDay } from './staff';
 import { weeklyMeeting } from './board';
@@ -77,6 +78,13 @@ function departed(s: GameState, f: Flight): void {
   book(s, 'landing', fee);
   book(s, 'paxFees', pf);
   book(s, 'departures', 1);
+  if (night) s.today.nightDeps = (s.today.nightDeps ?? 0) + 1;
+  if (f.delayed > 15) s.today.late = (s.today.late ?? 0) + 1;
+  s.today.missed = (s.today.missed ?? 0) + f.missed;
+  s.totals ??= { pax: 0, departures: 0 };
+  s.totals.departures++;
+  s.totals.pax += f.boarded + f.paxIn;
+  checkMilestones(s, f);
   book(s, 'passengers', f.boarded + f.paxIn);
   const c = s.contracts.find((x) => x.id === f.contract);
   if (c) {
@@ -116,6 +124,7 @@ function newDay(s: GameState, day: number): void {
   nightDaily(s);
   borderDaily(s);
   checkScenario(s);
+  checkMilestones(s);
   for (const c of s.contracts) scheduleContract(s, c, day);
   s.scheduledDay = day;
   allocateStands(s);

@@ -6,7 +6,7 @@ export type TileType = (typeof T)[keyof typeof T];
 export type ModuleKind =
   | 'runway' | 'tower' | 'stand_s' | 'stand_m' | 'stand_l' | 'stand_xl'
   | 'entrance' | 'exit' | 'checkin' | 'security' | 'gate' | 'food' | 'shop' | 'toilets' | 'seats' | 'baggage'
-  | 'carpark' | 'tree' | 'bagsort' | 'busgate' | 'passport' | 'transfer' | 'lounge' | 'egates';
+  | 'carpark' | 'tree' | 'bagsort' | 'busgate' | 'passport' | 'transfer' | 'lounge' | 'egates' | 'station';
 
 export type PaintKind = 'taxiway' | 'floor' | 'apron' | 'barrier' | 'skywalk';
 
@@ -81,6 +81,7 @@ export interface Offer extends Omit<Contract, 'id' | 'since' | 'happiness'> {
   id: number;
   expires: number; // day
   minRating: number;
+  upgrade?: number; // an existing contract asking for one more daily flight
 }
 
 export type PaxState =
@@ -112,6 +113,7 @@ export interface Pax {
   transfer?: boolean; // connecting from an arriving flight
   premium?: boolean; // uses lounges
   egate?: boolean; // eligible for automated passport gates
+  ride?: { until: number; x: number; y: number }; // on the people mover, arriving at (x, y)
 }
 
 export interface Ledger {
@@ -125,6 +127,9 @@ export interface Ledger {
   wages: number;
   transfers?: number; // connecting passengers
   lounge?: number; // lounge visits
+  nightDeps?: number; // departures in the night window
+  late?: number; // departures 15+ minutes late
+  missed?: number; // passengers who missed their flight
   departures: number;
   passengers: number;
 }
@@ -180,6 +185,8 @@ export interface GameState {
   goodwill: number; // 0..100, how the neighbours feel about the airport (night noise)
   tutorial?: { on: boolean; step: number; seen: string[] }; // guided tutorial and one-time introductions
   scenario?: { id: string; result?: 'won' | 'lost'; shown?: boolean };
+  milestones?: string[]; // unlocked milestone ids
+  totals?: { pax: number; departures: number }; // all-time counters
   skywalks?: number[]; // tile indices of elevated walkways linking terminals (aircraft taxi underneath)
 }
 

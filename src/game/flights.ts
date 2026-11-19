@@ -10,7 +10,7 @@ import type { Building, Contract, Flight, GameState } from './types';
 import { readyAt } from './types';
 import { T } from './types';
 import { addNews } from './news';
-import { curfewBlocks } from './night';
+import { CURFEWS, curfewBlocks } from './night';
 import { gateAllows } from './border';
 
 const DAY = 1440;
@@ -61,7 +61,13 @@ function destinationsOf(code: string): string[] {
 export function generateOffers(s: GameState): void {
   const day = Math.floor(s.minute / DAY);
   s.offers = s.offers.filter((o) => o.expires >= day);
-  const want = 2 + (s.rating > 60 ? 1 : 0) - Math.floor(s.offers.length / 3);
+  // happy airlines ask for more flights on routes they already fly: the late game's growth
+  for (const c of s.contracts) {
+    if (c.night || c.perDay >= 6 || c.happiness < 75 || Math.random() > 0.06) continue;
+    if (s.offers.some((o) => o.upgrade === c.id)) continue;
+    s.offers.push({ id: ++s.nextId, airline: c.airline, dest: c.dest, typeId: c.typeId, perDay: c.perDay + 1, load: c.load, expires: day + 4, minRating: 0, upgrade: c.id });
+  }
+  const want = 2 + (s.rating > 60 ? 1 : 0) - Math.floor(s.offers.filter((o) => o.upgrade === undefined).length / 3);
   // most offers fit the stands you already have (or regional/narrowbody ones before you have any)
   const order = ['s', 'm', 'l', 'xl'];
   const biggest = Math.max(1, ...s.buildings.filter((b) => b.kind.startsWith('stand_')).map((b) => order.indexOf(b.kind.slice(6))));
@@ -94,6 +100,16 @@ export function generateOffers(s: GameState): void {
 export function acceptOffer(s: GameState, id: number): string | null {
   const o = s.offers.find((x) => x.id === id);
   if (!o) return 'Offer no longer available';
+  if (o.upgrade !== undefined) {
+    // a happy airline adds a daily flight on a route it already flies
+    const c = s.contracts.find((x) => x.id === o.upgrade);
+    s.offers = s.offers.filter((x) => x.id !== id);
+    if (!c) return 'That airline no longer flies here';
+    c.perDay++;
+    c.happiness = Math.min(100, c.happiness + 5);
+    addNews(s, `${airlineName(c.airline)} now flies ${c.perDay}× daily to ${airport(c.dest).city}.`, 'good');
+    return null;
+  }
   if (s.rating < o.minRating) return `${airlineName(o.airline)} wants a rating of at least ${o.minRating}`;
   s.offers = s.offers.filter((x) => x.id !== id);
   if (o.night && s.curfew !== 'none') return 'Night flights are banned by your curfew';
@@ -134,13 +150,21 @@ export function scheduleContract(s: GameState, c: Contract, day: number, notBefo
     const dep = c.night
       ? day * DAY + NIGHT.start + 30 + Math.round(phase * 6.5 * 60 + rnd(-8, 8))
       : day * DAY + 6 * 60 + 30 + Math.round(((k + phase) * span) / c.perDay + rnd(-8, 8));
-    const arr = dep - turnaroundMin(c.typeId);
+    let arr = dep - turnaroundMin(c.typeId);
+    // airlines plan around a curfew: a day rotation that would land or leave inside it moves to the edge of the window
+    if (!c.night && s.curfew !== 'none') {
+      const { from, to } = CURFEWS[s.curfew];
+      const m = (t: number) => ((t % DAY) + DAY) % DAY;
+      if (m(arr) < to) { const shift = to + 5 - m(arr); arr += shift; }
+      if (m(arr + turnaroundMin(c.typeId)) >= from) arr -= m(arr + turnaroundMin(c.typeId)) - from + 5;
+    }
+    const depAt = arr + turnaroundMin(c.typeId);
     if (arr - 15 < notBefore) continue;
     const base = 100 + ((c.id * 37) % 800);
     const seats = seatsOf(c.typeId);
     const f: Flight = {
       id: ++s.nextId, contract: c.id, airline: c.airline, number: `${c.airline}${base + k * 2}`, dest: c.dest, typeId: c.typeId,
-      arr, dep, stand: null, phase: 'scheduled',
+      arr, dep: depAt, stand: null, phase: 'scheduled',
       paxOut: Math.round(seats * Math.min(0.97, c.load * rnd(0.88, 1.08))), paxIn: Math.round(seats * Math.min(0.97, c.load * rnd(0.85, 1.05))),
       boarded: 0, deplaned: 0, spawned: 0, missed: 0, delayed: 0, path: [], pathI: 0, x: 0, y: 0, alt: 0, facing: 0, speed: 0, waitUntil: 0,
       bagsChecked: 0, bagsSorted: 0, bagsLoaded: 0, bagsIn: 0, bagsUnloaded: 0, bagsDelivered: 0, bagsLeft: 0, night: !!c.night,

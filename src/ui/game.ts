@@ -7,6 +7,7 @@ import { busCount, isRemote } from '../game/buses';
 import { crossesBorder, FLOW_LABEL, hasPassportControl, ZONE_LABEL, zoneOf, type GateZone } from '../game/border';
 import { hasTransferDesk, hubShare } from '../game/hub';
 import { scenarioDef, scenarioProgress, SCENARIOS, startScenario } from '../game/scenarios';
+import { MILESTONES } from '../game/milestones';
 import { CURFEWS, planningMultiplier, setCurfew } from '../game/night';
 import { coverage, needed, openServers, positions, shifts, staffToNeed, wagesPerDay } from '../game/staff';
 import { acceptOffer, airlineColor, airlineName, allocateStands, declineOffer, gateOf, reachableStands, runway, hasTower } from '../game/flights';
@@ -37,7 +38,7 @@ const SPEED_LABEL = ['', '1×', '2×', '3×', '4×'];
 
 const PALETTE: { cat: Category | 'tools'; label: string; items: ({ build: ModuleKind } | { paint: PaintKind })[] }[] = [
   { cat: 'airside', label: 'Airside', items: [{ build: 'runway' }, { build: 'tower' }, { paint: 'taxiway' }, { paint: 'apron' }, { build: 'stand_s' }, { build: 'stand_m' }, { build: 'stand_l' }, { build: 'stand_xl' }, { build: 'bagsort' }] },
-  { cat: 'terminal', label: 'Terminal', items: [{ paint: 'floor' }, { build: 'entrance' }, { build: 'checkin' }, { build: 'security' }, { paint: 'barrier' }, { paint: 'skywalk' }, { build: 'exit' }, { build: 'passport' }, { build: 'egates' }, { build: 'gate' }, { build: 'busgate' }, { build: 'transfer' }, { build: 'baggage' }] },
+  { cat: 'terminal', label: 'Terminal', items: [{ paint: 'floor' }, { build: 'entrance' }, { build: 'checkin' }, { build: 'security' }, { paint: 'barrier' }, { paint: 'skywalk' }, { build: 'station' }, { build: 'exit' }, { build: 'passport' }, { build: 'egates' }, { build: 'gate' }, { build: 'busgate' }, { build: 'transfer' }, { build: 'baggage' }] },
   { cat: 'comfort', label: 'Comforts', items: [{ build: 'food' }, { build: 'shop' }, { build: 'lounge' }, { build: 'toilets' }, { build: 'seats' }] },
   { cat: 'landside', label: 'Landside', items: [{ build: 'carpark' }, { build: 'tree' }] },
 ];
@@ -46,7 +47,7 @@ const ITEM_ICON: Partial<Record<ModuleKind | PaintKind, IconName>> = {
   runway: 'runway', tower: 'tower', taxiway: 'taxiway', apron: 'floor', stand_s: 'stand', stand_m: 'stand', stand_l: 'stand', stand_xl: 'stand',
   floor: 'terminal', entrance: 'entrance', checkin: 'checkin', security: 'security', gate: 'gate', baggage: 'baggage', food: 'food', shop: 'shop',
   toilets: 'toilets', seats: 'seats', carpark: 'car', tree: 'tree', bagsort: 'baggage', busgate: 'bus', passport: 'passport', barrier: 'barrier', exit: 'exit',
-  transfer: 'security', lounge: 'seats', egates: 'passport', skywalk: 'bridge',
+  transfer: 'security', lounge: 'seats', egates: 'passport', skywalk: 'bridge', station: 'train',
 };
 
 export class Game {
@@ -189,6 +190,7 @@ export class Game {
         // announcement chime for good news, a low tone for bad
         if (this.s.news.length && this.s.news[0] !== this.lastNews) {
           if (this.lastNews) this.sound.play(this.s.news[0].tone === 'bad' ? 'alert' : 'chime');
+          if (this.lastNews && this.s.news[0].text.startsWith('Milestone:')) this.toast(this.s.news[0].text.split('.')[0]);
           this.lastNews = this.s.news[0];
         }
       }
@@ -666,6 +668,9 @@ export class Game {
         <div class="row small muted"><span>${prog.text}</span><span>Reward ${money(b.objective.reward)}</span></div>
         <div class="conf"><span>Board confidence</span><div class="meter ${b.confidence < 30 ? 'low' : b.confidence < 60 ? 'mid' : 'high'}"><i style="width:${b.confidence}%"></i></div><b>${Math.round(b.confidence)}</b></div>
       </section>
+      <section class="card"><h3>${icon('medal')} Milestones · ${(s.milestones ?? []).length}/${MILESTONES.length}</h3>
+        <div class="medals">${MILESTONES.map((m) => `<span class="medal ${(s.milestones ?? []).includes(m.id) ? 'on' : ''}" title="${esc(m.title)}: ${esc(m.desc)}">${icon('medal')}</span>`).join('')}</div>
+      </section>
       <section class="card"><h3>Latest news</h3><ul class="news">${s.news.slice(0, 6).map((n) => `<li class="${n.tone}"><span class="muted mono">D${Math.floor(n.min / 1440) + 1} ${clock(n.min)}</span> ${esc(n.text)}</li>`).join('')}</ul></section>`;
   }
 
@@ -691,7 +696,7 @@ export class Game {
       const locked = s.rating < o.minRating;
       return `<div class="offer">
         <div class="offer-h"><span class="chip" style="--c:${airlineColor(o.airline)}">${o.airline}</span><b>${esc(airlineName(o.airline))}</b><span class="muted small">expires day ${o.expires + 1}</span></div>
-        <div class="offer-b">${o.night ? '<span class="tag night">Night</span> ' : ''}${icon('plane')} ${o.night ? 'A nightly red-eye' : `${o.perDay}× daily`} to <b>${esc(airport(o.dest).city)}</b> (${o.dest}) · ${esc(acType(o.typeId).name)} · needs stand ${standClassFor(o.typeId).toUpperCase()}</div>
+        <div class="offer-b">${o.upgrade !== undefined ? `<span class="tag night">More flights</span> ${icon('plane')} Wants <b>${o.perDay}× daily</b> to <b>${esc(airport(o.dest).city)}</b> instead of ${o.perDay - 1}× · ${esc(acType(o.typeId).name)}` : `${o.night ? '<span class="tag night">Night</span> ' : ''}${icon('plane')} ${o.night ? 'A nightly red-eye' : `${o.perDay}× daily`} to <b>${esc(airport(o.dest).city)}</b> (${o.dest}) · ${esc(acType(o.typeId).name)} · needs stand ${standClassFor(o.typeId).toUpperCase()}`}</div>
         ${o.night ? `<div class="offer-b small muted">Leaves between 22:30 and 05:00. Landing fees ×${NIGHT.premium}, but night noise costs goodwill and needs round-the-clock staff.</div>` : ''}
         <div class="offer-b muted small">~${num(o.perDay * 2 * Math.round(acType(o.typeId).maxSeats * 0.85 * o.load))} passengers a day${locked ? ` · requires rating ${o.minRating}` : ''}${fits ? '' : ' · you have no stand this size yet'}</div>
         <div class="actions"><button class="btn primary sm" data-act="accept" data-id="${o.id}" ${locked || (o.night && s.curfew !== 'none') ? 'disabled' : ''}>Accept</button><button class="btn sm" data-act="decline" data-id="${o.id}">Decline</button></div>

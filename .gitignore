@@ -1,3 +1,5 @@
 node_modules
 dist
 art/debug/
+test-results/
+playwright-report/

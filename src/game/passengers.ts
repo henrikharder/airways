@@ -8,6 +8,7 @@ import { busRate, isRemote, runBuses, takeSeat } from './buses';
 import { flowAllows, isBorder } from './border';
 import { pickConnection, premiumShare, transferShare } from './hub';
 import { openServers } from './staff';
+import { trainNetwork } from './train';
 import { gateOf } from './flights';
 import { accessTile, frontDir, getLayout, layoutStamp, localPoint, walkable } from './grid';
 import { distanceTo, nextStep, UNREACHABLE } from './paths';
@@ -225,6 +226,12 @@ function stepTo(p: Pax, x: number, y: number, dist: number): boolean {
 
 /** Walk along a building's flow field; true on arrival at its access tile. */
 function walkTo(s: GameState, p: Pax, b: Building, dt: number): boolean | 'lost' {
+  if (p.ride) {
+    // on the people mover: step off at the next platform when it arrives
+    if (s.minute < p.ride.until) return false;
+    p.x = p.ride.x; p.y = p.ride.y; p.tx = p.x; p.ty = p.y;
+    p.ride = undefined;
+  }
   let left = WALK * dt;
   for (let k = 0; k < 4 && left > 0; k++) {
     const atTx = Math.abs(p.x - p.tx) < 0.02 && Math.abs(p.y - p.ty) < 0.02;
@@ -237,6 +244,13 @@ function walkTo(s: GameState, p: Pax, b: Building, dt: number): boolean | 'lost'
         if (!back) return 'lost';
         p.tx = back[0] + 0.5; p.ty = back[1] + 0.5;
         continue;
+      }
+      if (Math.abs(ns[0] - Math.floor(p.x)) + Math.abs(ns[1] - Math.floor(p.y)) > 1) {
+        // the next move is a train ride from this platform door
+        const here = Math.floor(p.y) * s.W + Math.floor(p.x);
+        const ride = trainNetwork(s).links.get(here)?.find((r) => r.to === ns[1] * s.W + ns[0]);
+        p.ride = { until: s.minute + (ride?.minutes ?? 2), x: ns[0] + 0.5, y: ns[1] + 0.5 };
+        return false;
       }
       const isGoal = distanceTo(s, b, ns[0], ns[1], !p.dep) === 0;
       p.tx = ns[0] + 0.5 + (isGoal ? 0 : p.ox);

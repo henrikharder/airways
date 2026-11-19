@@ -57,6 +57,7 @@ export function buildExpanded(s: GameState): string[] {
   put('transfer', 8, 58); put('toilets', 12, 57); put('passport', 19, 57); put('food', 24, 57); put('toilets', 29, 57); put('passport', 33, 57); put('shop', 38, 57);
   put('seats', 43, 58); put('seats', 46, 58); put('shop', 52, 57); put('passport', 57, 57); put('food', 62, 57);
   put('toilets', 67, 57); put('passport', 70, 57); put('shop', 74, 57); put('transfer', 78, 58); put('seats', 84, 58); put('seats', 87, 58); put('food', 94, 57); put('lounge', 98, 57);
+  put('station', 31, 60, 2); put('station', 85, 60, 2); // people mover along the airside, doors facing the concourse
   // passport halls split by direction (e-gates serve both)
   for (const pb of s.buildings) if (pb.kind === 'passport') pb.flow = pb.x === 19 || pb.x === 70 ? 'in' : 'out';
   for (const x of [41, 44, 47, 50, 53, 56, 59, 62]) put('security', x, 62);

@@ -9,7 +9,7 @@ import { addNews } from './news';
 import { staffToNeed } from './staff';
 import type { GameState } from './types';
 
-export type GoalKind = 'paxWeek' | 'transfersDay';
+export type GoalKind = 'paxWeek' | 'transfersDay' | 'departuresDay' | 'rating' | 'nightDay';
 
 export interface ScenarioDef {
   id: string;
@@ -44,6 +44,45 @@ export const SCENARIOS: ScenarioDef[] = [
       staffToNeed(s);
     },
   },
+  {
+    id: 'budget', title: 'Shoestring start', blurb: 'An empty field and only $5.5M. Every dollar counts.',
+    goal: { kind: 'departuresDay', target: 12, label: 'Run 12 departures in a day', byDay: 20 },
+    setup: (s) => { s.cash = 5_500_000; },
+  },
+  {
+    id: 'rescue', title: 'Turnaround job', blurb: 'A struggling airport: unhappy airlines, too few staff, a poor rating and $2M. Fix it.',
+    goal: { kind: 'rating', target: 75, label: 'Lift the airport rating to 75', byDay: 21 },
+    setup: (s) => {
+      buildDemo(s);
+      for (const [airline, dest, typeId] of [['U2', 'LGW', 'A20N'], ['LH', 'MUC', 'A20N']] as const) {
+        const id = ++s.nextId;
+        s.offers.push({ id, airline, dest, typeId, perDay: 3, load: 0.85, expires: 99, minRating: 0 });
+        acceptOffer(s, id);
+      }
+      staffToNeed(s);
+      s.staff = { checkin: Math.floor(s.staff.checkin / 2), security: Math.floor(s.staff.security / 2), ground: Math.floor(s.staff.ground / 2) };
+      s.buildings = s.buildings.filter((b) => b.kind !== 'bagsort' && b.kind !== 'food' && b.kind !== 'shop');
+      for (const c of s.contracts) c.happiness = 35;
+      s.rating = 35;
+      s.cash = 2_000_000;
+      s.today.construction = 0;
+    },
+  },
+  {
+    id: 'night', title: 'Night owl', blurb: 'An airport that lives on red-eyes. Keep the night flights coming without turning the neighbours against you.',
+    goal: { kind: 'nightDay', target: 6, label: 'Run 6 night departures in a day with goodwill at 40 or more', byDay: 25 },
+    setup: (s) => {
+      buildDemo(s);
+      for (const [airline, dest, typeId] of [['FR', 'DUB', 'B38M'], ['U2', 'GVA', 'A20N'], ['FR', 'MAN', 'B38M']] as const) {
+        const id = ++s.nextId;
+        s.offers.push({ id, airline, dest, typeId, perDay: 1, load: 0.85, expires: 99, minRating: 0, night: true });
+        acceptOffer(s, id);
+      }
+      s.cash = 8_000_000;
+      s.today.construction = 0;
+      staffToNeed(s);
+    },
+  },
 ];
 
 export function scenarioDef(s: GameState): ScenarioDef | undefined {
@@ -64,8 +103,13 @@ export function scenarioProgress(s: GameState): { value: number; text: string } 
   const days = [...s.history, { ...s.today, day: Math.floor(s.minute / 1440) }];
   let best = 0;
   if (g.kind === 'paxWeek') for (let i = 0; i < days.length; i++) best = Math.max(best, days.slice(Math.max(0, i - 6), i + 1).reduce((n, d) => n + d.passengers, 0));
-  else best = Math.max(0, ...days.map((d) => d.transfers ?? 0));
-  return { value: best / g.target, text: `${Math.round(best).toLocaleString('en-US')} / ${g.target.toLocaleString('en-US')}` };
+  else if (g.kind === 'transfersDay') best = Math.max(0, ...days.map((d) => d.transfers ?? 0));
+  else if (g.kind === 'departuresDay') best = Math.max(0, ...days.map((d) => d.departures));
+  else if (g.kind === 'rating') best = s.rating;
+  else best = Math.max(0, ...days.map((d) => d.nightDeps ?? 0));
+  // the night goal only counts while the neighbours are still on side
+  const value = g.kind === 'nightDay' && s.goodwill < 40 ? Math.min(0.99, best / g.target) : best / g.target;
+  return { value, text: `${Math.round(best).toLocaleString('en-US')} / ${g.target.toLocaleString('en-US')}${g.kind === 'nightDay' ? ` · goodwill ${Math.round(s.goodwill)}` : ''}` };
 }
 
 /** Daily: won, or out of time? */

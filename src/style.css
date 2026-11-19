@@ -189,6 +189,10 @@ main { position: relative; min-height: 0; overflow: hidden; }
 .goal { border-left: 6px solid var(--green); }
 @media (max-width: 700px) { .scenarios { grid-template-columns: 1fr; } }
 
+.medals { display: flex; flex-wrap: wrap; gap: 4px; }
+.medal { display: grid; place-items: center; width: 30px; height: 30px; background: var(--sign-3); color: #6b6b66; font-size: 18px; }
+.medal.on { background: var(--yellow); color: var(--ink); }
+
 /* pause menu and save slots */
 .menu-list { display: flex; flex-direction: column; gap: 6px; }
 .menu-list .btn { justify-content: center; }

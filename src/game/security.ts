@@ -64,3 +64,14 @@ export function securityReport(s: GameState): SecurityReport {
 }
 
 export const SECURITY_FINE = 40_000;
+
+let sideCache: { stamp: number; landside: Uint8Array } | null = null;
+
+/** 1 for tiles a passenger can walk to from an entrance without screening (the landside). */
+export function landsideMask(s: GameState): Uint8Array {
+  if (sideCache && sideCache.stamp === layoutStamp()) return sideCache.landside;
+  const entrances = s.buildings.filter((b) => b.kind === 'entrance');
+  const landside = flood(s, entrances.map(accessTile), false);
+  sideCache = { stamp: layoutStamp(), landside };
+  return landside;
+}

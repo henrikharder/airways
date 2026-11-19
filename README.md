@@ -18,6 +18,8 @@ npm install
 npm run dev        # http://localhost:5173
 npm test           # engine tests, a two-week new-player run and a three-day large-airport soak
 npm run build      # typecheck + production build
+npm run e2e        # browser smoke test against the build (needs Chrome installed)
+LONG=1 npx vitest run src/game/long.test.ts   # 60-day balance run (~3 min)
 ```
 
 Controls: drag to pan (or WASD), scroll to zoom, R to rotate a building, Q/E to

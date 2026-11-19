@@ -9,10 +9,12 @@ describe('expanded airport', () => {
   it('runs three busy days without gridlock', () => {
     const s = expandedGame();
     const done = new Map<number, Flight>();
+    let trainRides = 0; const riding = new Set<number>();
     let peak = 0, lost = 0, maxCheckinWait = 0, maxSecurityWait = 0, maxPassportWait = 0, maxHeld = 0;
     for (let m = 0; m < 3 * 24 * 60; m += 10) {
       advance(s, 10);
       peak = Math.max(peak, s.pax.length);
+      for (const p of s.pax) if (p.ride && !riding.has(p.id)) { riding.add(p.id); trainRides++; }
       lost = Math.max(lost, s.pax.filter((p) => p.state === 'lost').length);
       for (const b of s.buildings) {
         if (b.kind === 'checkin') maxCheckinWait = Math.max(maxCheckinWait, serviceStats(b.id, s.minute).wait);
@@ -38,6 +40,7 @@ describe('expanded airport', () => {
       remoteBoarded: dep.filter((f) => remoteIds.has(f.stand ?? -1)).reduce((n, f) => n + f.boarded, 0),
       transfers: s.history.reduce((n, d) => n + (d.transfers ?? 0), 0) + (s.today.transfers ?? 0),
       lounge: s.history.reduce((n, d) => n + (d.lounge ?? 0), 0) + (s.today.lounge ?? 0),
+      trainRides,
       peak, lost, maxCheckinWait: Math.round(maxCheckinWait), maxSecurityWait: Math.round(maxSecurityWait), maxPassportWait: Math.round(maxPassportWait), maxHeld,
       rating: Math.round(s.rating), goodwill: Math.round(s.goodwill), cash: Math.round(s.cash),
       days: s.history.map((d) => ({ day: d.day + 1, dep: d.departures, pax: d.passengers, profit: Math.round(d.landing + d.paxFees + d.food + d.retail + d.parking - d.upkeep - d.wages) })),

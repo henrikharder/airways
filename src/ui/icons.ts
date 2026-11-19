@@ -41,13 +41,15 @@ import signOut from '@phosphor-icons/core/assets/fill/sign-out-fill.svg?raw';
 import bus from '@phosphor-icons/core/assets/fill/bus-fill.svg?raw';
 import idCard from '@phosphor-icons/core/assets/fill/identification-card-fill.svg?raw';
 import bridge from '@phosphor-icons/core/assets/fill/bridge-fill.svg?raw';
+import train from '@phosphor-icons/core/assets/fill/train-fill.svg?raw';
+import medal from '@phosphor-icons/core/assets/fill/medal-fill.svg?raw';
 
 const ICONS = {
   seats: armchair, terminal: buildings, car, runway: roadHorizon, entrance: doorOpen, gauge, floor: squaresFour, info,
   board: bank, baggage: suitcase, map: mapTrifold, menu: list, select: cursor, pause, plane: airplane, landing,
   takeoff, rotate, rotateBack, taxiway: path, security: scan, shop: shoppingBag, bulldoze: bulldozer, stand: airplaneTilt,
   target, checkin: ticket, toilets: toilet, tower: cellTower, tree, alert: warning, trophy,
-  gate: users, food: forkKnife, wallet, close: x, barrier: wall, exit: signOut, bus, passport: idCard, bridge,
+  gate: users, food: forkKnife, wallet, close: x, barrier: wall, exit: signOut, bus, passport: idCard, bridge, train, medal,
 } as const;
 
 export type IconName = keyof typeof ICONS;
